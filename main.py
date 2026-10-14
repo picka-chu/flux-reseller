@@ -3,7 +3,7 @@ from urllib.parse import parse_qsl
 from contextlib import contextmanager
 from psycopg.rows import dict_row
 from datetime import datetime, timezone, timedelta
-from fastapi import FastAPI, HTTPException, Header, Depends
+from fastapi import FastAPI, HTTPException, Header, Depends, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -141,8 +141,9 @@ async def configure_telegram_webhook():
             print(f"Telegram webhook setup failed: {type(exc).__name__}: {exc}")
 
 @app.post("/telegram/webhook/{secret}")
-async def telegram_webhook(secret: str, update: dict):
-    if not hmac.compare_digest(secret, WEBHOOK_SECRET):
+async def telegram_webhook(secret: str, update: dict, request: Request):
+    header_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if not hmac.compare_digest(secret, WEBHOOK_SECRET) or not hmac.compare_digest(header_secret, WEBHOOK_SECRET):
         raise HTTPException(403, "Forbidden")
     message = update.get("message") or {}
     chat = message.get("chat") or {}
@@ -150,24 +151,100 @@ async def telegram_webhook(secret: str, update: dict):
     text_in = (message.get("text") or "").strip()
     if not chat.get("id") or not text_in:
         return {"ok": True}
-    if text_in.split()[0].split("@")[0] == "/start":
-        first = user.get("first_name") or "there"
-        keyboard = {"inline_keyboard": [[{"text": "Open FLUX", "web_app": {"url": WEBAPP_URL}}]]} if WEBAPP_URL.startswith("https://") else None
-        payload = {
-            "chat_id": chat["id"],
-            "text": f"Welcome to FLUX, {first}!\\n\\nYour digital essentials in one place. Open the app to browse products, manage your wallet, and track orders.",
-        }
-        if keyboard:
-            payload["reply_markup"] = keyboard
+    command = text_in.split()[0].split("@")[0].lower()
+    telegram_id = user.get("id")
+    first = user.get("first_name") or "there"
+    if telegram_id:
+        ensure_user({"id": int(telegram_id), "username": user.get("username", ""), "first_name": first})
+    keyboard = {"inline_keyboard": [[{"text": "Open FLUX", "web_app": {"url": WEBAPP_URL}}]]} if WEBAPP_URL.startswith("https://") else None
+
+    async def reply(message_text, markup=None):
+        payload = {"chat_id": chat["id"], "text": message_text}
+        if markup:
+            payload["reply_markup"] = markup
+        await telegram_api("sendMessage", payload)
+
+    if command == "/start":
+        welcome = f"Welcome to FLUX, {first}!\n\nYour digital essentials in one place. Browse products, manage wallet requests, and track orders."
+        if not keyboard:
+            welcome += "\n\nThe app link is being configured. Please try again shortly."
+        await reply(welcome, keyboard)
+    elif command in ("/help", "/commands"):
+        await reply("FLUX commands\n/start — open the store\n/balance — view wallet balance\n/orders — recent orders\n/help — this message\n\nPayments are manually reviewed. Never send funds until official recipient instructions are configured.")
+    elif command == "/balance":
+        with db() as c:
+            row = c.execute("SELECT balance_cents FROM users WHERE telegram_id=?", (int(telegram_id),)).fetchone()
+        await reply("Your FLUX wallet balance: USD " + format((row["balance_cents"] if row else 0) / 100, ".2f"))
+    elif command == "/orders":
+        with db() as c:
+            rows = c.execute("SELECT id,product_id,status,created_at FROM orders WHERE telegram_id=? ORDER BY created_at DESC LIMIT 5", (int(telegram_id),)).fetchall()
+        if not rows:
+            await reply("You do not have any FLUX orders yet.")
         else:
-            payload["text"] += "\\n\\nThe app is being configured. Please try again shortly."
-        try:
-            await telegram_api("sendMessage", payload)
-        except Exception as exc:
-            print(f"Telegram /start reply failed: {type(exc).__name__}: {exc}")
-    elif text_in.startswith("/help"):
-        await telegram_api("sendMessage", {"chat_id": chat["id"], "text": "FLUX help: use /start to open the app. Wallet credits require administrator verification. Never send funds until payment instructions are shown by the official store."})
+            lines = ["Your latest FLUX orders:"]
+            for row in rows:
+                lines.append(f"• {row['id']} — {row['product_id'].replace('-', ' ')} ({row['status'].replace('_', ' ')})")
+            await reply("\n".join(lines), keyboard)
+    elif command in ("/admin", "/pending", "/stats") and telegram_id in ADMIN_IDS:
+        if command == "/stats":
+            with db() as c:
+                users_n = c.execute("SELECT COUNT(*) n FROM users").fetchone()["n"]
+                orders_n = c.execute("SELECT COUNT(*) n FROM orders").fetchone()["n"]
+                pending_n = c.execute("SELECT COUNT(*) n FROM topups WHERE status='pending'").fetchone()["n"]
+                balance_n = c.execute("SELECT COALESCE(SUM(balance_cents),0) n FROM users").fetchone()["n"]
+            await reply(f"FLUX admin overview\nUsers: {users_n}\nOrders: {orders_n}\nPending top-ups: {pending_n}\nTotal wallet liabilities: USD {balance_n/100:.2f}")
+        else:
+            with db() as c:
+                rows = c.execute("SELECT id,telegram_id,method,base_cents,tx_reference FROM topups WHERE status='pending' ORDER BY created_at ASC LIMIT 15").fetchall()
+            if not rows:
+                await reply("No pending top-ups right now.")
+            else:
+                lines = ["Pending top-ups (verify funds before approving):"]
+                for row in rows:
+                    lines.append(f"{row['id']} · user {row['telegram_id']} · USD {row['base_cents']/100:.2f} · {row['method']} · ref: {row['tx_reference'] or 'not submitted'}")
+                lines.append("Approve: /approve TP-XXXXXXXX\nReject: /reject TP-XXXXXXXX")
+                await reply("\n".join(lines))
+    elif command in ("/approve", "/reject") and telegram_id in ADMIN_IDS:
+        parts = text_in.split(maxsplit=1)
+        if len(parts) != 2:
+            await reply(f"Usage: {command} TP-XXXXXXXX")
+        else:
+            try:
+                result = decide_topup_record(parts[1].strip().upper(), "approve" if command == "/approve" else "reject")
+                await reply(f"Top-up {result['id']} marked {result['status']}.")
+                if command == "/approve":
+                    with db() as c:
+                        row = c.execute("SELECT telegram_id,base_cents FROM topups WHERE id=?", (result["id"],)).fetchone()
+                    try:
+                        await telegram_api("sendMessage", {"chat_id": row["telegram_id"], "text": f"Your FLUX top-up {result['id']} has been approved. Wallet credit: USD {row['base_cents']/100:.2f}."})
+                    except Exception:
+                        pass
+            except HTTPException as exc:
+                await reply(f"Could not process top-up: {exc.detail}")
+    elif command.startswith("/"):
+        await reply("I did not recognize that command. Use /help for the command list.")
     return {"ok": True}
+
+def decide_topup_record(tid: str, decision: str, note: str | None = None):
+    if decision not in ("approve", "reject"):
+        raise HTTPException(400, "Decision must be approve or reject")
+    with db() as c:
+        row = c.execute("SELECT * FROM topups WHERE id=?", (tid,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Top-up not found")
+        if row["status"] != "pending":
+            raise HTTPException(409, "Top-up has already been reviewed")
+        now = datetime.now(timezone.utc).isoformat()
+        claimed = c.execute("UPDATE topups SET status=?,reviewed_at=? WHERE id=? AND status='pending'",
+                            (decision + "d", now, tid))
+        if claimed.rowcount != 1:
+            raise HTTPException(409, "Top-up has already been reviewed")
+        if decision == "approve":
+            c.execute("UPDATE users SET balance_cents=balance_cents+? WHERE telegram_id=?",
+                      (row["base_cents"], row["telegram_id"]))
+            c.execute("INSERT INTO ledger(id,telegram_id,delta_cents,reason,reference,created_at) VALUES(?,?,?,?,?,?)",
+                      ("LG-" + secrets.token_hex(5), row["telegram_id"], row["base_cents"], "topup", tid, now))
+    return {"id": tid, "status": decision + "d", "note": note}
 
 @app.get("/") 
 def home(): return FileResponse(os.path.join(ROOT,"static","index.html"))
@@ -238,15 +315,5 @@ def admin_topups(u=Depends(admin)):
     with db() as c: rows=c.execute("SELECT * FROM topups ORDER BY created_at DESC LIMIT 100").fetchall()
     return [dict(r) for r in rows]
 @app.post("/api/admin/topups/{tid}")
-def decide_topup(tid:str,b:AdminDecision,u=Depends(admin)):
-    if b.decision not in ("approve","reject"): raise HTTPException(400,"Decision must be approve or reject")
-    with db() as c:
-        row=c.execute("SELECT * FROM topups WHERE id=?",(tid,)).fetchone()
-        if not row: raise HTTPException(404,"Top-up not found")
-        if row["status"]!="pending": raise HTTPException(409,"Top-up has already been reviewed")
-        now=datetime.now(timezone.utc).isoformat()
-        if b.decision=="approve":
-            c.execute("UPDATE users SET balance_cents=balance_cents+? WHERE telegram_id=?",(row["base_cents"],row["telegram_id"]))
-            c.execute("INSERT INTO ledger(id,telegram_id,delta_cents,reason,reference,created_at) VALUES(?,?,?,?,?,?)",("LG-"+secrets.token_hex(5),row["telegram_id"],row["base_cents"],"topup",tid,now))
-        c.execute("UPDATE topups SET status=?,reviewed_at=? WHERE id=?",(b.decision+"d",now,tid))
-    return {"id":tid,"status":b.decision+"d","note":b.note}
+def decide_topup(tid: str, b: AdminDecision, u=Depends(admin)):
+    return decide_topup_record(tid, b.decision, b.note)
