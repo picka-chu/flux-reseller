@@ -283,14 +283,13 @@ async def telegram_webhook(secret: str, update: dict, request: Request):
                 lines.append(f"• {row['id']} — {product_name_of(row['product_id'])} ({row['status'].replace('_', ' ')})")
             await reply("\n".join(lines), keyboard)
     elif command in ("/admin", "/pending", "/stats") and telegram_id in ADMIN_IDS:
-        if command == "/stats":
-            with db() as c:
-                users_n = c.execute("SELECT COUNT(*) n FROM users").fetchone()["n"]
-                orders_n = c.execute("SELECT COUNT(*) n FROM orders").fetchone()["n"]
-                pending_n = c.execute("SELECT COUNT(*) n FROM topups WHERE status='pending'").fetchone()["n"]
-                balance_n = c.execute("SELECT COALESCE(SUM(balance_cents),0) n FROM users").fetchone()["n"]
-            await reply(f"{BRAND_NAME} admin overview\nUsers: {users_n}\nOrders: {orders_n}\nPending top-ups: {pending_n}\nTotal wallet liabilities: USD {balance_n/100:.2f}")
-        else:
+        with db() as c:
+            users_n = c.execute("SELECT COUNT(*) n FROM users").fetchone()["n"]
+            orders_n = c.execute("SELECT COUNT(*) n FROM orders WHERE status!='refunded'").fetchone()["n"]
+            pending_topups = c.execute("SELECT COUNT(*) n FROM topups WHERE status='pending'").fetchone()["n"]
+            pending_orders = c.execute("SELECT COUNT(*) n FROM orders WHERE status IN ('pending_review','processing','needs_review')").fetchone()["n"]
+            balance_n = c.execute("SELECT COALESCE(SUM(balance_cents),0) n FROM users").fetchone()["n"]
+        if command == "/pending":
             with db() as c:
                 rows = c.execute("SELECT id,telegram_id,method,base_cents,tx_reference FROM topups WHERE status='pending' ORDER BY created_at ASC LIMIT 15").fetchall()
             if not rows:
@@ -299,8 +298,19 @@ async def telegram_webhook(secret: str, update: dict, request: Request):
                 lines = ["Pending top-ups (verify funds before approving):"]
                 for row in rows:
                     lines.append(f"{row['id']} · user {row['telegram_id']} · USD {row['base_cents']/100:.2f} · {row['method']} · ref: {row['tx_reference'] or 'not submitted'}")
-                lines.append("Approve: /approve TP-XXXXXXXX\nReject: /reject TP-XXXXXXXX")
-                await reply("\n".join(lines))
+                lines.append("Use the Verify buttons on each top-up alert, or open the dashboard.")
+                await reply("\n".join(lines), admin_dashboard_markup())
+        else:
+            summary = (
+                f"{BRAND_NAME} admin\n\n"
+                f"Pending top-ups: {pending_topups}\n"
+                f"Orders to review: {pending_orders}\n"
+                f"Customers: {users_n} · Orders: {orders_n}\n"
+                f"Wallet liabilities: USD {balance_n/100:.2f}"
+            )
+            if not admin_dashboard_markup():
+                summary += "\n\nThe dashboard button needs an https FLUX_WEBAPP_URL to be set on the server."
+            await reply(summary, admin_dashboard_markup())
     elif command in ("/approve", "/reject") and telegram_id in ADMIN_IDS:
         parts = text_in.split(maxsplit=1)
         if len(parts) != 2:
@@ -321,6 +331,11 @@ async def telegram_webhook(secret: str, update: dict, request: Request):
     elif command.startswith("/"):
         await reply("I did not recognize that command. Use /help for the command list.")
     return {"ok": True}
+
+def admin_dashboard_markup():
+    if not WEBAPP_URL.startswith("https://"):
+        return None
+    return {"inline_keyboard": [[{"text": "Open admin dashboard", "web_app": {"url": WEBAPP_URL + "/admin"}}]]}
 
 def decide_topup_record(tid: str, decision: str, note: str | None = None):
     if decision not in ("approve", "reject"):
