@@ -4,11 +4,14 @@ import { Button, Notice, useToast } from "../components/ui";
 import { post } from "../lib/api";
 import { haptic } from "../lib/telegram";
 
-export interface TopupCreated { id: string; reference: string; expected_amount: number; expires_at: string }
+export interface TopupCreated {
+  id: string; reference: string; expected_amount: number; expires_at: string;
+  recipient: string; method_label: string; currency: string;
+}
 const PRESETS = [10, 25, 50, 100, 250];
 const METHODS: { id: string; title: string; sub: string; icon: LucideIcon }[] = [
   { id: "bybit", title: "Bybit UID transfer", sub: "USDT · internal transfer", icon: ArrowLeftRight },
-  { id: "telegram_wallet", title: "Telegram Wallet", sub: "Follow verified store instructions", icon: Send }
+  { id: "telegram_wallet", title: "Telegram Wallet", sub: "USDT · send to the store wallet", icon: Send }
 ];
 
 export function TopUpSheet({ onCreated }: { onCreated: (t: TopupCreated) => void }) {
@@ -59,7 +62,7 @@ export function TopUpSheet({ onCreated }: { onCreated: (t: TopupCreated) => void
           </button>
         ))}
       </div>
-      <Notice tone="warn">Recipient details are not configured yet. Don’t send money until official payment instructions are published by the store.</Notice>
+      <Notice>You’ll get the exact amount and address on the next screen. Send that exact figure so we can match your payment.</Notice>
       <Button full size="lg" loading={busy} disabled={!valid} onClick={submit}>Continue</Button>
     </>
   );

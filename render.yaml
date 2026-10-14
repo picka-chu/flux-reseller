@@ -12,6 +12,10 @@ services:
         sync: false
       - key: SUPABASE_DB_URL
         sync: false
+      - key: SUPPLIER_API_KEY
+        sync: false
+      - key: BRAND_NAME
+        value: Storefront
       - key: FLUX_DEMO_MODE
         value: "false"
       - key: PAYMENT_TTL_MINUTES

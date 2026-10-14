@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "react";
 import {
-  AlertTriangle, Check, ChevronRight, Coins, LayoutDashboard, Megaphone, Moon, Package, Receipt, RefreshCw,
-  Search, ShieldCheck, Sun, UserPlus, Users, Wallet, X, type LucideIcon
+  AlertTriangle, Boxes, Check, ChevronRight, Coins, LayoutDashboard, Megaphone, Moon, Package, Receipt, RefreshCw,
+  Search, Settings, ShieldCheck, Sun, TrendingUp, UserPlus, Users, Wallet, X, type LucideIcon
 } from "lucide-react";
 import { BrandMark } from "../components/Chrome";
 import { BRAND } from "../lib/brand";
@@ -10,22 +10,26 @@ import { useTheme } from "../hooks/useTheme";
 import { post, request } from "../lib/api";
 import { confirmAction } from "../lib/telegram";
 import { dateTime, money, titleCase } from "../lib/format";
-import type { AdminAd, AdminDashboard, AdminOrder, AdminOverview, AdminTopup, AdminUser } from "../lib/types";
+import type { AdminAd, AdminCatalog, AdminCatalogItem, AdminDashboard, AdminOrder, AdminOverview, AdminSettings, AdminTopup, AdminUser, CatalogDefaults } from "../lib/types";
 
-type Page = "overview" | "topups" | "orders" | "customers" | "ads";
+type Page = "overview" | "topups" | "orders" | "customers" | "ads" | "catalog" | "settings";
 const NAV: { id: Page; label: string; icon: LucideIcon }[] = [
   { id: "overview", label: "Overview", icon: LayoutDashboard },
   { id: "topups", label: "Top-ups", icon: Wallet },
   { id: "orders", label: "Orders", icon: Package },
   { id: "customers", label: "Customers", icon: Users },
-  { id: "ads", label: "Ads", icon: Megaphone }
+  { id: "ads", label: "Ads", icon: Megaphone },
+  { id: "catalog", label: "Catalog", icon: Boxes },
+  { id: "settings", label: "Settings", icon: Settings }
 ];
 const TITLES: Record<Page, [string, string]> = {
   overview: ["Overview", "A live snapshot of your store."],
   topups: ["Top-ups", "Review requests only after checking payment receipt."],
   orders: ["Orders", "Update fulfilment status and handle eligible refunds."],
   customers: ["Customers", "Search registered customer accounts."],
-  ads: ["Ads", "Publish sponsored placements for the home and shop pages."]
+  ads: ["Ads", "Publish sponsored placements for the home and shop pages."],
+  catalog: ["Catalog", "Supplier plans, your margins, and what customers see."],
+  settings: ["Settings", "Pricing defaults and payment addresses."]
 };
 
 export default function Admin() {
@@ -42,6 +46,8 @@ function Console() {
   const [orders, setOrders] = useState<AdminOrder[]>([]);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [ads, setAds] = useState<AdminAd[]>([]);
+  const [catalog, setCatalog] = useState<AdminCatalog | null>(null);
+  const [settingsData, setSettingsData] = useState<AdminSettings | null>(null);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -56,6 +62,8 @@ function Console() {
       if (page === "orders") setOrders(await request<AdminOrder[]>("/api/admin/orders"));
       if (page === "customers") setUsers(await request<AdminUser[]>("/api/admin/users"));
       if (page === "ads") setAds(await request<AdminAd[]>("/api/admin/ads"));
+      if (page === "catalog") setCatalog(await request<AdminCatalog>("/api/admin/catalog"));
+      if (page === "catalog" || page === "settings") setSettingsData(await request<AdminSettings>("/api/admin/settings"));
     } catch (e) { setError(e instanceof Error ? e.message : "Request failed"); }
     finally { setLoading(false); }
   }, [page]);
@@ -67,6 +75,10 @@ function Console() {
     try { await run(); toast(done); await load(); }
     catch (e) { toast(e instanceof Error ? e.message : "Request failed", "error"); }
     finally { setActing(""); }
+  };
+  const syncOrders = async () => {
+    try { const r = await post<{ updated: number }>("/api/admin/orders/sync", {}); toast(`Supplier check done. ${r.updated} order(s) updated`); await load(); }
+    catch (e) { toast(e instanceof Error ? e.message : "Request failed", "error"); }
   };
   const decide = (t: AdminTopup, decision: "approve" | "reject") =>
     act(t.id, `${decision === "approve" ? "Approve" : "Reject"} top-up ${t.id}?${decision === "approve" ? " Only approve after confirming the funds arrived." : ""}`,
@@ -88,6 +100,7 @@ function Console() {
       <header className="sticky top-0 z-20 -mx-4 flex h-16 items-center justify-between border-b border-line bg-bg/85 px-4 backdrop-blur-xl sm:-mx-7 sm:px-7">
         <a href="/" className="flex items-center gap-2.5"><BrandMark size={32} /><span className="text-[16px] font-semibold tracking-tight">{BRAND}</span><span className="rounded-full bg-fill px-2.5 py-0.5 text-[12px] font-semibold text-muted">Operations</span></a>
         <div className="flex items-center gap-2">
+          {page === "orders" && <Button variant="secondary" size="sm" onClick={syncOrders}>Check supplier</Button>}
           <Button variant="secondary" size="sm" aria-label="Toggle theme" onClick={() => theme.setMode(theme.resolved === "dark" ? "light" : "dark")}>{theme.resolved === "dark" ? <Sun size={16} /> : <Moon size={16} />}</Button>
           <Button variant="secondary" size="sm" aria-label="Refresh" onClick={load}><RefreshCw size={16} className={loading ? "animate-spin" : ""} /></Button>
         </div>
@@ -118,12 +131,14 @@ function Console() {
           )}
           <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
             <div><h1 className="text-[32px] font-bold tracking-tight">{title}</h1><p className="mt-1 text-[15px] text-muted">{subtitle}</p></div>
-            {page !== "overview" && page !== "ads" && <span className="text-[13px] text-muted">{count} records · latest 100</span>}
+            {!["overview", "ads", "catalog", "settings"].includes(page) && <span className="text-[13px] text-muted">{count} records · latest 100</span>}
           </div>
 
           {page === "overview" && <DashboardPanel d={dashboard} o={overview} go={setPage} />}
           {page === "ads" && <AdsPanel ads={ads} reload={load} />}
-          {page !== "overview" && page !== "ads" && (
+          {page === "catalog" && <CatalogPanel catalog={catalog} settings={settingsData} reload={load} />}
+          {page === "settings" && <SettingsPanel settings={settingsData} reload={load} />}
+          {!["overview", "ads", "catalog", "settings"].includes(page) && (
             <>
               <label className="mb-4 flex h-12 items-center gap-2.5 rounded-full bg-fill px-4 text-muted focus-within:ring-2 focus-within:ring-brand">
                 <Search size={18} />
@@ -151,7 +166,7 @@ function Console() {
                     <Row key={o.id} cols="md:grid-cols-[1fr_1fr_1fr_.8fr_auto]">
                       <Cell title={o.id} sub={dateTime(o.created_at)} />
                       <Cell title={`${o.first_name || "Customer"} · ${o.telegram_id}`} sub={`@${o.username || "not set"}`} />
-                      <Cell title={titleCase(o.product_id || "")} sub={money(o.price)} capitalize />
+                      <Cell title={o.product_name || o.product_id} sub={`${money(o.price)} · profit ${money(o.price - o.cost)}`} />
                       <div><StatusPill status={o.status} /></div>
                       <div className="flex flex-wrap gap-2">
                         {!["delivered", "refunded"].includes(o.status) && (<>
@@ -193,7 +208,6 @@ function DashboardPanel({ d, o, go }: { d: AdminDashboard | null; o: AdminOvervi
   const totalOrders14 = d ? d.series.reduce((n, x) => n + x.orders, 0) : 0;
   const values = d ? d.series.map((x) => (metric === "revenue" ? x.revenue : x.orders)) : [];
   const peak = Math.max(1, ...values);
-  const conversion = d && d.totals.users ? Math.round((d.totals.paying_customers / d.totals.users) * 100) : 0;
 
   const vsYesterday = (now?: number, before?: number) => {
     if (now === undefined || before === undefined) return "";
@@ -207,7 +221,7 @@ function DashboardPanel({ d, o, go }: { d: AdminDashboard | null; o: AdminOvervi
     { icon: Coins, label: "Revenue", value: money(d?.totals.revenue), note: vsYesterday(today?.revenue, yesterday?.revenue) },
     { icon: Receipt, label: "Orders", value: String(d?.totals.orders ?? "—"), note: vsYesterday(today?.orders, yesterday?.orders) },
     { icon: UserPlus, label: "Customers", value: String(d?.totals.users ?? "—"), note: today ? `${today.customers} new today` : "" },
-    { icon: Users, label: "Paying customers", value: String(d?.totals.paying_customers ?? "—"), note: d ? `${conversion}% of customers` : "" }
+    { icon: TrendingUp, label: "Profit", value: money(d?.totals.profit), note: d ? `${d.totals.paying_customers} paying customers` : "" }
   ];
   const attention: [Page, LucideIcon, string, string, number | undefined][] = [
     ["topups", Wallet, "Review top-ups", "Confirm transfers arrived before approving", d?.totals.pending_topups ?? o?.pending_topups],
@@ -454,4 +468,181 @@ const AdField = ({ label, children }: { label: string; children: ReactNode }) =>
     {children}
   </label>
 );
+
+const Stat = ({ label, value, note }: { label: string; value: string; note?: string }) => (
+  <div className="card p-5">
+    <p className="text-[13px] text-muted">{label}</p>
+    <b className="num mt-1 block truncate text-[22px] font-bold leading-tight">{value}</b>
+    {note && <p className="mt-1 text-[12px] text-muted">{note}</p>}
+  </div>
+);
+
+function CatalogPanel({ catalog, settings, reload }: { catalog: AdminCatalog | null; settings: AdminSettings | null; reload: () => Promise<void> }) {
+  const toast = useToast();
+  const [syncing, setSyncing] = useState(false);
+  const sup = settings?.supplier;
+  const defaults: CatalogDefaults = catalog?.defaults ?? { margin_percent: 0, markup_cents: 0 };
+  const cols = "md:grid-cols-[minmax(0,1.5fr)_.6fr_.6fr_.7fr_.6fr_.6fr_auto]";
+
+  const sync = async () => {
+    setSyncing(true);
+    try {
+      const r = await post<{ synced: number; added: number; removed: number }>("/api/admin/supplier/sync", {});
+      toast(`Synced ${r.synced} plans · ${r.added} new`);
+      await reload();
+    } catch (e) { toast(e instanceof Error ? e.message : "Request failed", "error"); }
+    finally { setSyncing(false); }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 md:grid-cols-4">
+        <Stat label="Supplier" value={sup?.store || (sup?.configured ? "Connected" : "Not connected")}
+              note={sup?.ordering_enabled === false ? "Ordering is disabled" : sup?.ordering_enabled ? "Ordering is enabled" : undefined} />
+        <Stat label="Supplier balance" value={sup?.balance != null ? money(sup.balance) : "—"} note="Top this up before customers order" />
+        <Stat label="Plans listed" value={String(settings?.catalog_count ?? "—")} note="New supplier plans go live automatically" />
+        <Stat label="Last sync" value={settings?.catalog_synced_at ? dateTime(settings.catalog_synced_at) : "Never"} note="Checked every 30 minutes" />
+      </div>
+      {sup?.error && <div className="rounded-2xl bg-warn/10 p-4 text-[14px] text-warn">{sup.error}</div>}
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-[17px] font-bold">Plans and pricing</h2>
+          <p className="text-[13px] text-muted">You charge the supplier cost plus your margin. Blank margin uses the default in Settings.</p>
+        </div>
+        <Button variant="secondary" size="sm" loading={syncing} disabled={!sup?.configured} onClick={sync}><RefreshCw size={14} /> Sync from supplier</Button>
+      </div>
+
+      <div className="card overflow-hidden">
+        <Table cols={cols} head={["Plan", "Supplier cost", "Margin", "Period", "You charge", "Profit", ""]}
+               empty={<Empty icon={Boxes} title={catalog ? "No plans yet" : "Loading plans"} text="Plans appear here after the first supplier sync." />}>
+          {(catalog?.items ?? []).map((item) => (
+            <CatalogRow key={`${item.id}-${item.margin_percent}-${item.markup_cents}-${item.category}-${item.period}-${item.enabled}-${item.display_name}`}
+                        item={item} defaults={defaults} cols={cols} reload={reload} />
+          ))}
+        </Table>
+      </div>
+    </div>
+  );
+}
+
+function CatalogRow({ item, defaults, cols, reload }: { item: AdminCatalogItem; defaults: CatalogDefaults; cols: string; reload: () => Promise<void> }) {
+  const toast = useToast();
+  const initialMargin = item.margin_percent == null ? "" : String(item.margin_percent);
+  const initialCategory = item.category;
+  const initialPeriod = item.period;
+  const [margin, setMargin] = useState(initialMargin);
+  const [category, setCategory] = useState(initialCategory);
+  const [period, setPeriod] = useState(initialPeriod);
+  const [saving, setSaving] = useState(false);
+
+  const m = margin.trim() === "" ? defaults.margin_percent : Number(margin);
+  const sell = Math.ceil(item.cost_cents * (1 + m / 100) + defaults.markup_cents - 1e-9);
+  const profit = sell - item.cost_cents;
+  const dirty = margin !== initialMargin || category !== initialCategory || period !== initialPeriod;
+
+  const save = async () => {
+    const body: Record<string, unknown> = {};
+    if (margin !== initialMargin) body.margin_percent = margin.trim() === "" ? null : Number(margin);
+    if (category !== initialCategory && category.trim()) body.category = category.trim();
+    if (period !== initialPeriod) body.period = period;
+    setSaving(true);
+    try { await post(`/api/admin/catalog/${item.id}`, body); toast("Plan saved"); await reload(); }
+    catch (e) { toast(e instanceof Error ? e.message : "Request failed", "error"); }
+    finally { setSaving(false); }
+  };
+  const toggle = async () => {
+    try { await post(`/api/admin/catalog/${item.id}`, { enabled: !item.enabled }); toast(item.enabled ? "Plan hidden from customers" : "Plan is live"); await reload(); }
+    catch (e) { toast(e instanceof Error ? e.message : "Request failed", "error"); }
+  };
+
+  const field = { height: 36, padding: "0 10px" } as const;
+  return (
+    <Row cols={cols}>
+      <div className="min-w-0">
+        <b className="block truncate text-[14px] font-semibold">{item.display_name || item.name}</b>
+        <input className="input mt-1" style={{ ...field, fontSize: 12 }} value={category} onChange={(e) => setCategory(e.target.value)} aria-label="Category" />
+        <span className="mt-1 block text-[12px] text-muted">{item.in_stock ? `${item.stock} in stock` : "Out of stock"} · {item.sid}</span>
+      </div>
+      <span className="num text-[14px]">{money(item.supplier_price)}</span>
+      <div className="flex items-center gap-1.5">
+        <input className="input num" style={{ ...field, width: 74 }} inputMode="decimal" placeholder={String(defaults.margin_percent)} value={margin} onChange={(e) => setMargin(e.target.value)} aria-label="Margin percent" />
+        <span className="text-[13px] text-muted">%</span>
+      </div>
+      <select className="input" style={{ ...field, fontSize: 13 }} value={period} onChange={(e) => setPeriod(e.target.value as AdminCatalogItem["period"])} aria-label="Billing period">
+        <option value="month">Monthly</option>
+        <option value="year">Yearly</option>
+        <option value="one-time">One-time</option>
+      </select>
+      <b className="num text-[15px]">{money(sell / 100)}</b>
+      <b className={`num text-[15px] ${profit > 0 ? "text-up" : ""}`}>{money(profit / 100)}</b>
+      <div className="flex flex-wrap gap-2">
+        {dirty && <Button size="sm" loading={saving} onClick={save}>Save</Button>}
+        <Button size="sm" variant={item.enabled ? "secondary" : "primary"} onClick={toggle}>{item.enabled ? "Hide" : "Show"}</Button>
+      </div>
+    </Row>
+  );
+}
+
+function SettingsPanel({ settings, reload }: { settings: AdminSettings | null; reload: () => Promise<void> }) {
+  const toast = useToast();
+  const [form, setForm] = useState({ margin: "", markup: "", bybit: "", telegram: "" });
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (settings && !loaded) {
+      setForm({
+        margin: String(settings.default_margin_percent), markup: String(settings.default_markup_cents),
+        bybit: settings.bybit_address, telegram: settings.telegram_wallet_address
+      });
+      setLoaded(true);
+    }
+  }, [settings, loaded]);
+
+  const set = (k: keyof typeof form) => (e: ChangeEvent<HTMLInputElement>) => { const v = e.target.value; setForm((f) => ({ ...f, [k]: v })); };
+  const save = async () => {
+    if (form.margin.trim() === "" || Number.isNaN(Number(form.margin))) return toast("Enter a default margin, for example 20", "error");
+    setSaving(true);
+    try {
+      await post("/api/admin/settings", {
+        default_margin_percent: Number(form.margin), default_markup_cents: Number(form.markup || 0),
+        bybit_address: form.bybit.trim(), telegram_wallet_address: form.telegram.trim()
+      });
+      toast("Settings saved");
+      await reload();
+    } catch (e) { toast(e instanceof Error ? e.message : "Request failed", "error"); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className="grid gap-4 xl:grid-cols-2">
+      <section className="card space-y-4 p-5">
+        <div><h2 className="text-[17px] font-bold">Pricing defaults</h2><p className="mt-1 text-[13px] text-muted">Applied to every plan that doesn’t have its own margin.</p></div>
+        <AdField label="Default margin (%)">
+          <input className="input num" inputMode="decimal" value={form.margin} onChange={set("margin")} placeholder="20" />
+        </AdField>
+        <AdField label="Flat markup per plan (cents, optional)">
+          <input className="input num" inputMode="numeric" value={form.markup} onChange={set("markup")} placeholder="0" />
+        </AdField>
+        <p className="text-[12px] leading-relaxed text-muted">Customers see only the final price. Supplier cost and your profit are visible to admins only.</p>
+      </section>
+
+      <section className="card space-y-4 p-5">
+        <div><h2 className="text-[17px] font-bold">Payment addresses</h2><p className="mt-1 text-[13px] text-muted">Shown to customers when they top up. Leave one blank to switch that method off.</p></div>
+        <AdField label="Bybit UID">
+          <input className="input" value={form.bybit} onChange={set("bybit")} placeholder="Bybit UID" />
+        </AdField>
+        <AdField label="Telegram Wallet address">
+          <input className="input" value={form.telegram} onChange={set("telegram")} placeholder="Telegram Wallet address" />
+        </AdField>
+        <p className="text-[12px] leading-relaxed text-muted">Double-check these before saving. Customers send money to exactly what is shown here.</p>
+      </section>
+
+      <div className="xl:col-span-2">
+        <Button loading={saving} onClick={save}>Save settings</Button>
+      </div>
+    </div>
+  );
+}
 

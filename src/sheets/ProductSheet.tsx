@@ -47,7 +47,7 @@ export function ProductSheet({ product, me, onPurchased, onTopup }: { product: P
       <Notice>Supplier delivery isn’t configured yet. Orders are recorded for manual review and aren’t fulfilled automatically.</Notice>
       {short
         ? <Button full size="lg" onClick={onTopup}>Add funds to continue</Button>
-        : <Button full size="lg" loading={busy} disabled={!me} onClick={buy}>{me ? `${oneTime ? "Buy" : "Subscribe"} · ${money(product.price)}${per}` : "Open in Telegram to continue"}</Button>}
+        : <Button full size="lg" loading={busy} disabled={!me || !product.in_stock} onClick={buy}>{!product.in_stock ? "Sold out" : me ? `${oneTime ? "Buy" : "Subscribe"} · ${money(product.price)}${per}` : "Open in Telegram to continue"}</Button>}
     </>
   );
 }

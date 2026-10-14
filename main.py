@@ -8,6 +8,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import httpx
+import asyncio
+from decimal import Decimal, ROUND_CEILING
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 DATABASE_URL = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL", "")
@@ -17,20 +19,14 @@ ADMIN_IDS = {int(x) for x in os.getenv("ADMIN_TELEGRAM_IDS", "").split(",") if x
 TTL = int(os.getenv("PAYMENT_TTL_MINUTES", "20"))
 WEBAPP_URL = os.getenv("FLUX_WEBAPP_URL", os.getenv("RENDER_EXTERNAL_URL", "")).rstrip("/")
 BRAND_NAME = os.getenv("BRAND_NAME", "Storefront")
+SUPPLIER_BASE = os.getenv("SUPPLIER_API_BASE", "https://api-geminipro.ignorelist.com/api/reseller/v1").rstrip("/")
+SUPPLIER_API_KEY = os.getenv("SUPPLIER_API_KEY", "").strip()
+CATALOG_SYNC_MINUTES = int(os.getenv("CATALOG_SYNC_MINUTES", "30"))
 WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", secrets.token_urlsafe(32))
 app = FastAPI(title="Store API", version="0.2.0")
 FRONTEND_DIST = os.path.join(ROOT, "frontend_dist")
 if os.path.isdir(os.path.join(FRONTEND_DIST, "assets")):
     app.mount("/assets", StaticFiles(directory=os.path.join(FRONTEND_DIST, "assets")), name="frontend-assets")
-
-PRODUCTS = [
- {"id":"spotify-premium","name":"Spotify Premium","category":"Music","description":"Sample listing; availability must be confirmed.","price":4.99,"period":"month","icon":"♫","accent":"green","tag":"Popular","features":["Ad-free listening","Offline downloads","Background play"]},
- {"id":"chatgpt-plus","name":"ChatGPT Plus","category":"AI tools","description":"Sample listing; availability must be confirmed.","price":19.99,"period":"month","icon":"✳","accent":"mint","tag":"AI","features":["Priority access","Advanced models","Higher usage limits"]},
- {"id":"netflix-premium","name":"Netflix Premium","category":"Entertainment","description":"Sample listing; regional availability may vary.","price":7.99,"period":"month","icon":"N","accent":"red","tag":"Trending","features":["HD streaming","Multiple screens","Downloads on supported devices"]},
- {"id":"adobe-creative","name":"Adobe Creative Cloud","category":"Design","description":"Sample listing; availability must be confirmed.","price":29.99,"period":"month","icon":"✺","accent":"orange","tag":"Creative","features":["Full creative app suite","Cloud storage included","Regular updates"]},
- {"id":"gaming-points","name":"Gaming Points","category":"Gaming","description":"Sample listing; check region before ordering.","price":9.99,"period":"one-time","icon":"◈","accent":"purple","tag":"Gaming","features":["Credit for supported titles","Instant delivery","Check region first"]},
- {"id":"cloud-storage","name":"Cloud Storage","category":"Productivity","description":"Sample listing; availability must be confirmed.","price":5.99,"period":"month","icon":"▤","accent":"blue","tag":"Utility","features":["Encrypted backups","Sync across devices","Shareable links"]},
-]
 
 class DatabaseAdapter:
     """Small compatibility layer so existing parameterized queries work on SQLite and PostgreSQL."""
@@ -77,6 +73,8 @@ def init_db():
         CREATE UNIQUE INDEX IF NOT EXISTS unique_pending_amount ON topups(method,expected_millis) WHERE status='pending';
         CREATE TABLE IF NOT EXISTS ledger(id TEXT PRIMARY KEY,telegram_id INTEGER NOT NULL,delta_cents INTEGER NOT NULL,reason TEXT NOT NULL,reference TEXT NOT NULL UNIQUE,created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS orders(id TEXT PRIMARY KEY,telegram_id INTEGER NOT NULL,product_id TEXT NOT NULL,price_cents INTEGER NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,delivery_note TEXT);
+        CREATE TABLE IF NOT EXISTS catalog(id INTEGER PRIMARY KEY,name TEXT NOT NULL,description TEXT,supplier_price TEXT NOT NULL,currency TEXT,stock INTEGER NOT NULL DEFAULT 0,in_stock INTEGER NOT NULL DEFAULT 0,enabled INTEGER NOT NULL DEFAULT 1,margin_percent REAL,markup_cents INTEGER,category TEXT NOT NULL DEFAULT 'Subscriptions',period TEXT NOT NULL DEFAULT 'one-time',tag TEXT,display_name TEXT,removed INTEGER NOT NULL DEFAULT 0,synced_at TEXT);
+        CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS ads(id TEXT PRIMARY KEY,title TEXT NOT NULL,body TEXT,cta TEXT,link_url TEXT,image_url TEXT,placement TEXT NOT NULL,active INTEGER NOT NULL DEFAULT 1,ends_at TEXT,created_at TEXT NOT NULL);
         """)
         # Telegram IDs exceed PostgreSQL's signed 32-bit INTEGER range.
@@ -84,7 +82,32 @@ def init_db():
         if c.postgres:
             for table in ("users", "topups", "ledger", "orders"):
                 c.execute(f"ALTER TABLE {table} ALTER COLUMN telegram_id TYPE BIGINT")
+DEFAULT_SETTINGS = {
+    "default_margin_percent": "20",
+    "default_markup_cents": "0",
+    "bybit_address": "",
+    "telegram_wallet_address": "",
+    "catalog_synced_at": "",
+}
+
+def ensure_column(c, table, column, decl):
+    if c.postgres:
+        c.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {decl}")
+    else:
+        cols = [r["name"] for r in c.execute(f"PRAGMA table_info({table})").fetchall()]
+        if column not in cols:
+            c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+
+def migrate_and_seed():
+    with db() as c:
+        ensure_column(c, "orders", "cost_cents", "INTEGER")
+        ensure_column(c, "orders", "supplier_product_id", "INTEGER")
+        ensure_column(c, "orders", "supplier_order_code", "TEXT")
+        for k, v in DEFAULT_SETTINGS.items():
+            c.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO NOTHING", (k, v))
+
 init_db()
+migrate_and_seed()
 
 class TopupCreate(BaseModel):
     amount: float = Field(gt=0, le=10000)
@@ -106,6 +129,23 @@ class AdCreate(BaseModel):
     ends_at: str | None = None
 class AdStatus(BaseModel):
     active: bool
+
+PERIODS = {"month", "year", "one-time"}
+
+class CatalogUpdate(BaseModel):
+    enabled: bool | None = None
+    margin_percent: float | None = Field(default=None, ge=0, le=500)
+    markup_cents: int | None = Field(default=None, ge=0, le=100000)
+    category: str | None = Field(default=None, min_length=1, max_length=40)
+    period: str | None = None
+    tag: str | None = Field(default=None, max_length=20)
+    display_name: str | None = Field(default=None, max_length=80)
+
+class SettingsUpdate(BaseModel):
+    default_margin_percent: float | None = Field(default=None, ge=0, le=500)
+    default_markup_cents: int | None = Field(default=None, ge=0, le=100000)
+    bybit_address: str | None = Field(default=None, max_length=200)
+    telegram_wallet_address: str | None = Field(default=None, max_length=200)
 
 def validate_init(raw):
     if not BOT_TOKEN: raise HTTPException(503,"Telegram authentication is not configured")
@@ -160,7 +200,7 @@ async def configure_telegram_webhook():
             await telegram_api("setWebhook", {
                 "url": WEBAPP_URL + "/telegram/webhook/" + WEBHOOK_SECRET,
                 "secret_token": WEBHOOK_SECRET,
-                "allowed_updates": ["message"]
+                "allowed_updates": ["message", "callback_query"]
             })
         except Exception as exc:
             print(f"Telegram webhook setup failed: {type(exc).__name__}: {exc}")
@@ -170,6 +210,8 @@ async def telegram_webhook(secret: str, update: dict, request: Request):
     header_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
     if not hmac.compare_digest(secret, WEBHOOK_SECRET) or not hmac.compare_digest(header_secret, WEBHOOK_SECRET):
         raise HTTPException(403, "Forbidden")
+    if update.get("callback_query"):
+        return await handle_callback(update["callback_query"])
     message = update.get("message") or {}
     chat = message.get("chat") or {}
     user = message.get("from") or {}
@@ -238,7 +280,7 @@ async def telegram_webhook(secret: str, update: dict, request: Request):
         else:
             lines = ["Your latest orders:"]
             for row in rows:
-                lines.append(f"• {row['id']} — {row['product_id'].replace('-', ' ')} ({row['status'].replace('_', ' ')})")
+                lines.append(f"• {row['id']} — {product_name_of(row['product_id'])} ({row['status'].replace('_', ' ')})")
             await reply("\n".join(lines), keyboard)
     elif command in ("/admin", "/pending", "/stats") and telegram_id in ADMIN_IDS:
         if command == "/stats":
@@ -330,7 +372,10 @@ def health(): return {"status":"ok","service":"flux-api"}
 def config(): return {"brand":BRAND_NAME,"demo_mode":os.getenv("FLUX_DEMO_MODE","false").lower()=="true","payment_ttl_minutes":TTL,"currency":"USD"}
 @app.get("/api/products")
 def products(category:str|None=None,q:str|None=None):
-    items=PRODUCTS
+    with db() as c:
+        rows = c.execute("SELECT * FROM catalog WHERE enabled=1 AND removed=0 ORDER BY category, name").fetchall()
+    defaults = pricing_defaults()
+    items = [catalog_public_item(r, defaults) for r in rows]
     if category and category.lower() not in ("all","popular"): items=[p for p in items if p["category"].lower()==category.lower()]
     if category and category.lower()=="popular": items=[p for p in items if p.get("tag") in ("Popular","Trending")]
     if q: items=[p for p in items if q.lower() in (p["name"]+p["category"]+p["description"]).lower()]
@@ -351,6 +396,8 @@ def my_topups(u=Depends(current_user)):
 def create_topup(b:TopupCreate,u=Depends(current_user)):
     ensure_user(u); method=b.method.lower().strip()
     if method not in ("bybit","telegram_wallet"): raise HTTPException(400,"Choose Bybit or Telegram Wallet")
+    recipient = get_setting("bybit_address" if method=="bybit" else "telegram_wallet_address")
+    if not recipient: raise HTTPException(503,"This payment method is not set up yet. Please choose the other method.")
     if abs(b.amount-round(b.amount))>1e-9: raise HTTPException(400,"Custom top-ups must be whole-dollar amounts")
     cents=round(b.amount*100)
     with db() as c:
@@ -362,9 +409,9 @@ def create_topup(b:TopupCreate,u=Depends(current_user)):
         tid="TP-"+secrets.token_hex(4).upper(); ref="FLX-"+secrets.token_hex(3).upper()
         now=datetime.now(timezone.utc); expiry=now+timedelta(minutes=TTL)
         c.execute("INSERT INTO topups(id,telegram_id,method,base_cents,expected_millis,status,reference,expires_at,created_at) VALUES(?,?,?,?,?,'pending',?,?,?)",(tid,u["id"],method,cents,expected,ref,expiry.isoformat(),now.isoformat()))
-    return {"id":tid,"method":method,"base_amount":cents/100,"expected_amount":expected/1000,"reference":ref,"expires_at":expiry.isoformat(),"expires_in_seconds":TTL*60,"instructions":"Only send funds after the store owner has configured and verified recipient details."}
+    return {"id":tid,"method":method,"method_label":METHOD_LABELS[method],"recipient":recipient,"currency":"USDT","base_amount":cents/100,"expected_amount":expected/1000,"reference":ref,"expires_at":expiry.isoformat(),"expires_in_seconds":TTL*60,"instructions":"Send exactly the amount shown, to the address shown. The exact amount is how we match your payment."}
 @app.post("/api/topups/{tid}/verify")
-def verify(tid:str,b:VerifyRequest,u=Depends(current_user)):
+async def verify(tid:str,b:VerifyRequest,u=Depends(current_user)):
     with db() as c:
         row=c.execute("SELECT * FROM topups WHERE id=? AND telegram_id=?",(tid,u["id"])).fetchone()
         if not row: raise HTTPException(404,"Top-up not found")
@@ -373,24 +420,53 @@ def verify(tid:str,b:VerifyRequest,u=Depends(current_user)):
             c.execute("UPDATE topups SET status='expired' WHERE id=? AND status='pending'", (tid,))
             return {"status":"expired","message":"This payment request expired. Create a new request."}
         c.execute("UPDATE topups SET tx_reference=? WHERE id=?",(b.tx_reference.strip(),tid))
+    await notify_admins_topup(tid)
     return {"status":"pending","message":"Submitted for manual review. Wallet is credited only after an administrator confirms funds arrived."}
 @app.get("/api/orders")
 def orders(u=Depends(current_user)):
     with db() as c: rows=c.execute("SELECT id,product_id,price_cents,status,created_at,delivery_note FROM orders WHERE telegram_id=? ORDER BY created_at DESC LIMIT 50",(u["id"],)).fetchall()
-    return [dict(r,price=r["price_cents"]/100) for r in rows]
+    return [dict(r,price=r["price_cents"]/100,product_name=product_name_of(r["product_id"])) for r in rows]
 @app.post("/api/orders")
-def create_order(b:OrderCreate,u=Depends(current_user)):
-    ensure_user(u); p=next((p for p in PRODUCTS if p["id"]==b.product_id),None)
-    if not p: raise HTTPException(404,"Product not found")
-    cents=round(p["price"]*100); oid="OR-"+secrets.token_hex(4).upper()
+async def create_order(b:OrderCreate,u=Depends(current_user)):
+    ensure_user(u)
+    sid = parse_product_id(b.product_id)
     with db() as c:
-        row=c.execute("SELECT balance_cents FROM users WHERE telegram_id=?",(u["id"],)).fetchone()
-        if row["balance_cents"]<cents: raise HTTPException(400,"Insufficient balance. Add funds first.")
-        updated = c.execute("UPDATE users SET balance_cents=balance_cents-? WHERE telegram_id=? AND balance_cents>=?",(cents,u["id"],cents))
-        if updated.rowcount != 1: raise HTTPException(400,"Insufficient balance. Add funds first.")
-        c.execute("INSERT INTO orders(id,telegram_id,product_id,price_cents,status,created_at) VALUES(?,?,?,?,?,?)",(oid,u["id"],p["id"],cents,"pending_review",datetime.now(timezone.utc).isoformat()))
-        c.execute("INSERT INTO ledger(id,telegram_id,delta_cents,reason,reference,created_at) VALUES(?,?,?,?,?,?)",("LG-"+secrets.token_hex(5),u["id"],-cents,"order",oid,datetime.now(timezone.utc).isoformat()))
-    return {"id":oid,"status":"pending_review","message":"Order recorded; supplier fulfillment is not configured yet."}
+        row = c.execute("SELECT * FROM catalog WHERE id=? AND enabled=1 AND removed=0", (sid,)).fetchone()
+    if not row: raise HTTPException(404, "Product not found")
+    if not SUPPLIER_API_KEY: raise HTTPException(503, "Ordering is not available yet")
+    try:
+        live = (await supplier_request("GET", f"/products/{sid}")).get("product") or {}
+    except SupplierError:
+        raise HTTPException(503, "We couldn't reach the supplier. Please try again in a moment.")
+    if not live.get("inStock") or int(live.get("stock") or 0) < 1:
+        raise HTTPException(409, "This plan is sold out right now.")
+    cost = cost_cents_of(live.get("price", row["supplier_price"]))
+    sell = sell_cents(cost, row["margin_percent"], row["markup_cents"])
+    oid = "OR-" + secrets.token_hex(4).upper(); now = datetime.now(timezone.utc).isoformat()
+    with db() as c:
+        updated = c.execute("UPDATE users SET balance_cents=balance_cents-? WHERE telegram_id=? AND balance_cents>=?", (sell, u["id"], sell))
+        if updated.rowcount != 1: raise HTTPException(400, "Insufficient balance. Add funds first.")
+        c.execute("INSERT INTO orders(id,telegram_id,product_id,price_cents,status,created_at,cost_cents,supplier_product_id) VALUES(?,?,?,?,?,?,?,?)",
+                  (oid, u["id"], f"sup-{sid}", sell, "processing", now, cost, sid))
+        c.execute("INSERT INTO ledger(id,telegram_id,delta_cents,reason,reference,created_at) VALUES(?,?,?,?,?,?)",
+                  ("LG-" + secrets.token_hex(5), u["id"], -sell, "order", oid, now))
+    try:
+        resp = await supplier_request("POST", "/orders", json_body={"productId": sid, "quantity": 1})
+    except SupplierError as err:
+        if err.code in DEFINITE_FAILURES:
+            reason = REFUND_REASONS.get(err.code, "The order could not be placed.")
+            refund_order(oid, u["id"], sell, reason + " Your wallet has been refunded.")
+            raise HTTPException(400, reason + " Your wallet has been refunded.")
+        mark_order(oid, "needs_review", "We're confirming this order with the supplier. You'll see the result here shortly.")
+        return {"id": oid, "status": "needs_review", "message": "We're confirming this order with the supplier."}
+    order = resp.get("order") or {}
+    status = "delivered" if order.get("status") == "completed" else "processing"
+    value = order.get("value")
+    note = None if value in (None, "", "DELIVERED_DIGITAL_PRODUCT") else str(value)
+    with db() as c:
+        c.execute("UPDATE orders SET status=?, supplier_order_code=?, delivery_note=COALESCE(?,delivery_note) WHERE id=?",
+                  (status, order.get("orderCode"), note, oid))
+    return {"id": oid, "status": status, "message": "Delivered." if status == "delivered" else "Order placed. We'll update it shortly."}
 @app.get("/api/admin/overview")
 def admin_overview(u=Depends(admin)):
     with db() as c:
@@ -417,7 +493,7 @@ def admin_orders(u=Depends(admin)):
     with db() as c:
         rows = c.execute("""SELECT o.*,u.username,u.first_name FROM orders o
             LEFT JOIN users u ON u.telegram_id=o.telegram_id ORDER BY o.created_at DESC LIMIT 100""").fetchall()
-    return [dict(r, price=r["price_cents"] / 100) for r in rows]
+    return [dict(r, price=r["price_cents"] / 100, cost=(r["cost_cents"] or 0) / 100, product_name=product_name_of(r["product_id"])) for r in rows]
 
 class AdminOrderDecision(BaseModel):
     status: str
@@ -439,7 +515,7 @@ def admin_decide_order(oid: str, b: AdminOrderDecision, u=Depends(admin)):
         if previous == "delivered" and b.status != "delivered":
             raise HTTPException(409, "Delivered orders cannot be changed or refunded here")
         if b.status == "refunded":
-            if previous not in ("pending_review", "processing", "rejected"):
+            if previous not in ("pending_review", "processing", "rejected", "needs_review"):
                 raise HTTPException(409, "This order cannot be refunded from its current state")
             c.execute("UPDATE users SET balance_cents=balance_cents+? WHERE telegram_id=?",
                       (row["price_cents"], row["telegram_id"]))
@@ -530,7 +606,7 @@ def _last_days(n):
     return [(today - timedelta(days=i)).isoformat() for i in range(n - 1, -1, -1)]
 
 def _product_name(pid):
-    return next((p["name"] for p in PRODUCTS if p["id"] == pid), pid)
+    return product_name_of(pid)
 
 @app.get("/api/admin/dashboard")
 def admin_dashboard(u=Depends(admin)):
@@ -545,6 +621,7 @@ def admin_dashboard(u=Depends(admin)):
             "users": one("SELECT COUNT(*) n FROM users"),
             "orders": one("SELECT COUNT(*) n FROM orders WHERE status!='refunded'"),
             "revenue": one("SELECT COALESCE(SUM(price_cents),0) n FROM orders WHERE status!='refunded'") / 100,
+            "profit": one("SELECT COALESCE(SUM(price_cents-COALESCE(cost_cents,0)),0) n FROM orders WHERE status!='refunded'") / 100,
             "paying_customers": one("SELECT COUNT(DISTINCT telegram_id) n FROM orders WHERE status!='refunded'"),
             "pending_topups": one("SELECT COUNT(*) n FROM topups WHERE status='pending'"),
             "pending_orders": one("SELECT COUNT(*) n FROM orders WHERE status IN ('pending_review','processing')"),
@@ -590,4 +667,295 @@ def admin_dashboard(u=Depends(admin)):
 
     return {"generated_at": now.isoformat(), "totals": totals, "series": series,
             "status_breakdown": status_breakdown, "top_products": top_products, "recent": recent[:10]}
+
+# ── Settings helpers ───────────────────────────────────────────────────────
+METHOD_LABELS = {"bybit": "Bybit UID transfer", "telegram_wallet": "Telegram Wallet"}
+ACCENTS = ["green", "mint", "red", "orange", "purple", "blue"]
+
+def get_setting(key):
+    with db() as c:
+        row = c.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+    return row["value"] if row else DEFAULT_SETTINGS.get(key, "")
+
+def set_setting(key, value):
+    with db() as c:
+        c.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, str(value)))
+
+def pricing_defaults():
+    return float(get_setting("default_margin_percent") or 0), int(float(get_setting("default_markup_cents") or 0))
+
+# ── Pricing: what the supplier charges us, and what we charge the customer ──
+def cost_cents_of(price):
+    return int((Decimal(str(price)) * 100).to_integral_value(rounding=ROUND_CEILING))
+
+def sell_cents(cost, margin, markup, defaults=None):
+    dm, dk = defaults or pricing_defaults()
+    m = Decimal(str(dm if margin is None else margin))
+    k = Decimal(str(dk if markup is None else markup))
+    return int((Decimal(cost) * (1 + m / 100) + k).to_integral_value(rounding=ROUND_CEILING))
+
+def parse_product_id(pid):
+    if not pid.startswith("sup-") or not pid[4:].isdigit():
+        raise HTTPException(404, "Product not found")
+    return int(pid[4:])
+
+def product_name_of(pid):
+    try:
+        sid = parse_product_id(pid)
+    except HTTPException:
+        return pid
+    with db() as c:
+        row = c.execute("SELECT name, display_name FROM catalog WHERE id=?", (sid,)).fetchone()
+    return (row["display_name"] or row["name"]) if row else pid
+
+def catalog_public_item(r, defaults):
+    cost = cost_cents_of(r["supplier_price"])
+    return {
+        "id": f"sup-{r['id']}", "name": r["display_name"] or r["name"], "category": r["category"],
+        "description": r["description"] or "",
+        "price": sell_cents(cost, r["margin_percent"], r["markup_cents"], defaults) / 100,
+        "period": r["period"], "icon": (r["name"] or "?")[:1].upper(), "accent": ACCENTS[r["id"] % len(ACCENTS)],
+        "tag": r["tag"], "features": [], "in_stock": bool(r["in_stock"]) and (r["stock"] or 0) > 0,
+    }
+
+# ── Supplier client ────────────────────────────────────────────────────────
+class SupplierError(Exception):
+    def __init__(self, status, code, message=""):
+        super().__init__(code)
+        self.status, self.code, self.message = status, code, message
+
+# Errors that guarantee the supplier did not charge us, so the customer can be refunded safely.
+DEFINITE_FAILURES = {"insufficient_funds", "out_of_stock", "product_not_found", "invalid_product_id",
+                     "invalid_quantity", "invalid_order_payload", "invalid_api_key", "missing_api_key", "invalid_json"}
+REFUND_REASONS = {
+    "insufficient_funds": "The store's supplier balance is low right now, so the order was not placed.",
+    "out_of_stock": "This plan sold out just before your purchase.",
+    "product_not_found": "This plan is no longer available.",
+    "invalid_product_id": "This plan is no longer available.",
+    "invalid_api_key": "The store's supplier connection needs attention.",
+    "missing_api_key": "The store's supplier connection needs attention.",
+}
+
+async def supplier_request(method, path, json_body=None):
+    if not SUPPLIER_API_KEY:
+        raise SupplierError(0, "not_configured", "SUPPLIER_API_KEY is not set")
+    try:
+        async with httpx.AsyncClient(timeout=25) as client:
+            r = await client.request(method, SUPPLIER_BASE + path,
+                                     headers={"X-API-Key": SUPPLIER_API_KEY, "Accept": "application/json"},
+                                     json=json_body)
+    except httpx.HTTPError as exc:
+        raise SupplierError(0, "network", type(exc).__name__)
+    try:
+        data = r.json()
+    except ValueError:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    if r.status_code >= 400 or data.get("ok") is False:
+        raise SupplierError(r.status_code, data.get("error") or f"http_{r.status_code}", data.get("message") or "")
+    return data
+
+async def sync_catalog():
+    data = await supplier_request("GET", "/products")
+    items = data.get("products") or []
+    now = datetime.now(timezone.utc).isoformat()
+    seen, added = set(), 0
+    with db() as c:
+        existing = {r["id"] for r in c.execute("SELECT id FROM catalog").fetchall()}
+        for it in items:
+            pid = int(it.get("productId") or it.get("id"))
+            seen.add(pid)
+            if pid not in existing: added += 1
+            # New products are listed automatically at the default margin. Admin overrides are never overwritten.
+            c.execute("""INSERT INTO catalog(id,name,description,supplier_price,currency,stock,in_stock,synced_at)
+                VALUES(?,?,?,?,?,?,?,?)
+                ON CONFLICT(id) DO UPDATE SET name=excluded.name, description=excluded.description,
+                  supplier_price=excluded.supplier_price, currency=excluded.currency, stock=excluded.stock,
+                  in_stock=excluded.in_stock, synced_at=excluded.synced_at, removed=0""",
+                (pid, str(it.get("name") or it.get("title") or f"Product {pid}"), str(it.get("description") or ""),
+                 str(it.get("price") or "0"), str(it.get("currency") or "USD"), int(it.get("stock") or 0),
+                 1 if it.get("inStock") else 0, now))
+        gone = [i for i in existing if i not in seen]
+        for g in gone:
+            c.execute("UPDATE catalog SET removed=1, in_stock=0 WHERE id=?", (g,))
+    set_setting("catalog_synced_at", now)
+    return {"synced": len(items), "added": added, "removed": len(gone)}
+
+def refund_order(oid, telegram_id, cents, reason):
+    now = datetime.now(timezone.utc).isoformat()
+    with db() as c:
+        c.execute("UPDATE users SET balance_cents=balance_cents+? WHERE telegram_id=?", (cents, telegram_id))
+        c.execute("INSERT INTO ledger(id,telegram_id,delta_cents,reason,reference,created_at) VALUES(?,?,?,?,?,?)",
+                  ("LG-" + secrets.token_hex(5), telegram_id, cents, "order_refund", "REFUND-" + oid, now))
+        c.execute("UPDATE orders SET status='refunded', delivery_note=? WHERE id=?", (reason, oid))
+
+def mark_order(oid, status, note=None):
+    with db() as c:
+        c.execute("UPDATE orders SET status=?, delivery_note=COALESCE(?,delivery_note) WHERE id=?", (status, note, oid))
+
+async def sync_supplier_orders():
+    with db() as c:
+        rows = c.execute("SELECT id, supplier_order_code FROM orders WHERE supplier_order_code IS NOT NULL AND status IN ('processing','needs_review')").fetchall()
+    updated = 0
+    for r in rows:
+        try:
+            o = (await supplier_request("GET", f"/orders/{r['supplier_order_code']}")).get("order") or {}
+        except SupplierError:
+            continue
+        if o.get("status") == "completed":
+            value = o.get("value")
+            note = None if value in (None, "", "DELIVERED_DIGITAL_PRODUCT") else str(value)
+            mark_order(r["id"], "delivered", note)
+            updated += 1
+    return updated
+
+async def _catalog_loop():
+    while True:
+        try:
+            if SUPPLIER_API_KEY:
+                await sync_catalog()
+        except Exception as exc:
+            print(f"Catalogue sync failed: {type(exc).__name__}: {exc}")
+        await asyncio.sleep(max(1, CATALOG_SYNC_MINUTES) * 60)
+
+@app.on_event("startup")
+async def start_catalog_sync():
+    asyncio.create_task(_catalog_loop())
+
+# ── Admin: catalogue, pricing and settings ─────────────────────────────────
+@app.get("/api/admin/catalog")
+def admin_catalog(u=Depends(admin)):
+    defaults = pricing_defaults()
+    with db() as c:
+        rows = c.execute("SELECT * FROM catalog WHERE removed=0 ORDER BY enabled DESC, name").fetchall()
+    items = []
+    for r in rows:
+        cost = cost_cents_of(r["supplier_price"])
+        sell = sell_cents(cost, r["margin_percent"], r["markup_cents"], defaults)
+        items.append({"id": r["id"], "sid": f"sup-{r['id']}", "name": r["name"], "display_name": r["display_name"],
+                      "category": r["category"], "period": r["period"], "tag": r["tag"],
+                      "enabled": bool(r["enabled"]), "in_stock": bool(r["in_stock"]), "stock": r["stock"],
+                      "supplier_price": float(r["supplier_price"]), "cost_cents": cost,
+                      "margin_percent": r["margin_percent"], "markup_cents": r["markup_cents"],
+                      "sell_cents": sell, "profit_cents": sell - cost, "synced_at": r["synced_at"]})
+    return {"defaults": {"margin_percent": defaults[0], "markup_cents": defaults[1]}, "items": items}
+
+@app.post("/api/admin/catalog/{pid}")
+def admin_update_catalog(pid: int, b: CatalogUpdate, u=Depends(admin)):
+    sent = b.model_fields_set
+    fields = {}
+    if "enabled" in sent and b.enabled is not None: fields["enabled"] = 1 if b.enabled else 0
+    if "margin_percent" in sent: fields["margin_percent"] = b.margin_percent   # null = use default
+    if "markup_cents" in sent: fields["markup_cents"] = b.markup_cents         # null = use default
+    if "category" in sent and b.category: fields["category"] = b.category.strip()
+    if "period" in sent and b.period:
+        if b.period not in PERIODS: raise HTTPException(400, "Period must be month, year or one-time")
+        fields["period"] = b.period
+    if "tag" in sent: fields["tag"] = (b.tag or "").strip() or None
+    if "display_name" in sent: fields["display_name"] = (b.display_name or "").strip() or None
+    if not fields: raise HTTPException(400, "Nothing to update")
+    assignments = ", ".join(f"{k}=?" for k in fields)   # keys are fixed names above, never user input
+    with db() as c:
+        cur = c.execute(f"UPDATE catalog SET {assignments} WHERE id=?", (*fields.values(), pid))
+        if cur.rowcount != 1: raise HTTPException(404, "Product not found")
+    return {"id": pid, "updated": list(fields)}
+
+@app.post("/api/admin/supplier/sync")
+async def admin_sync_catalog(u=Depends(admin)):
+    try:
+        return await sync_catalog()
+    except SupplierError as exc:
+        raise HTTPException(502, f"Supplier sync failed ({exc.code})")
+
+@app.post("/api/admin/orders/sync")
+async def admin_sync_orders(u=Depends(admin)):
+    return {"updated": await sync_supplier_orders()}
+
+@app.get("/api/admin/settings")
+async def admin_settings(u=Depends(admin)):
+    supplier = {"configured": bool(SUPPLIER_API_KEY), "store": None, "ordering_enabled": None,
+                "balance": None, "currency": None, "error": None}
+    if SUPPLIER_API_KEY:
+        try:
+            info = await supplier_request("GET", "/account/info")
+            bal = await supplier_request("GET", "/account/balance")
+            supplier.update(store=info.get("store"), ordering_enabled=info.get("ordersEnabled"),
+                            balance=float(bal.get("balance") or 0), currency=bal.get("currency"))
+        except SupplierError as exc:
+            supplier["error"] = f"Supplier check failed ({exc.code})"
+    with db() as c:
+        count = c.execute("SELECT COUNT(*) n FROM catalog WHERE removed=0").fetchone()["n"]
+    return {"default_margin_percent": float(get_setting("default_margin_percent") or 0),
+            "default_markup_cents": int(float(get_setting("default_markup_cents") or 0)),
+            "bybit_address": get_setting("bybit_address"), "telegram_wallet_address": get_setting("telegram_wallet_address"),
+            "catalog_synced_at": get_setting("catalog_synced_at") or None, "catalog_count": count, "supplier": supplier}
+
+@app.post("/api/admin/settings")
+def admin_update_settings(b: SettingsUpdate, u=Depends(admin)):
+    for key in b.model_fields_set:
+        val = getattr(b, key)
+        if val is None: continue
+        set_setting(key, val.strip() if isinstance(val, str) else val)
+    return {"ok": True}
+
+# ── Admin notifications and Telegram button handling for top-ups ───────────
+async def notify_admins_topup(tid):
+    if not BOT_TOKEN: return
+    with db() as c:
+        row = c.execute("SELECT t.*, u.first_name, u.username FROM topups t LEFT JOIN users u ON u.telegram_id=t.telegram_id WHERE t.id=?", (tid,)).fetchone()
+    if not row or row["status"] != "pending": return
+    handle = f"@{row['username']}" if row["username"] else "no username"
+    text = (f"New top-up request {tid}\n\n"
+            f"Customer: {row['first_name'] or 'Customer'} ({handle})\n"
+            f"Telegram ID: {row['telegram_id']}\n"
+            f"Credit amount: ${row['base_cents']/100:.2f}\n"
+            f"Exact amount sent: {row['expected_millis']/1000:.3f} USDT\n"
+            f"Method: {METHOD_LABELS.get(row['method'], row['method'])}\n"
+            f"Payment reference: {row['reference']}\n"
+            f"Customer's transfer reference: {row['tx_reference'] or 'none'}\n\n"
+            "Check the exact amount arrived, then verify.")
+    keyboard = {"inline_keyboard": [[{"text": "✅ Verify & credit", "callback_data": f"tp:ok:{tid}"},
+                                     {"text": "❌ Reject", "callback_data": f"tp:no:{tid}"}]]}
+    for admin_id in ADMIN_IDS:
+        try:
+            await telegram_api("sendMessage", {"chat_id": admin_id, "text": text, "reply_markup": keyboard})
+        except Exception as exc:
+            print(f"Could not notify admin {admin_id}: {type(exc).__name__}")
+
+async def handle_callback(cb):
+    cb_id = cb.get("id")
+    sender = cb.get("from") or {}
+    msg = cb.get("message") or {}
+    if int(sender.get("id") or 0) not in ADMIN_IDS:
+        await telegram_api("answerCallbackQuery", {"callback_query_id": cb_id, "text": "Only store admins can do this.", "show_alert": True})
+        return {"ok": True}
+    parts = (cb.get("data") or "").split(":")
+    if len(parts) != 3 or parts[0] != "tp" or parts[1] not in ("ok", "no"):
+        await telegram_api("answerCallbackQuery", {"callback_query_id": cb_id, "text": "Unknown action"})
+        return {"ok": True}
+    tid, decision = parts[2], ("approve" if parts[1] == "ok" else "reject")
+    try:
+        decide_topup_record(tid, decision)
+    except HTTPException as exc:
+        await telegram_api("answerCallbackQuery", {"callback_query_id": cb_id, "text": str(exc.detail), "show_alert": True})
+        return {"ok": True}
+    with db() as c:
+        row = c.execute("SELECT telegram_id, base_cents FROM topups WHERE id=?", (tid,)).fetchone()
+    try:
+        if decision == "approve":
+            await telegram_api("sendMessage", {"chat_id": row["telegram_id"], "text": f"Your top-up {tid} was confirmed. ${row['base_cents']/100:.2f} has been added to your wallet."})
+        else:
+            await telegram_api("sendMessage", {"chat_id": row["telegram_id"], "text": f"Your top-up {tid} could not be confirmed. Contact support with your payment reference."})
+    except Exception:
+        pass
+    verdict = "✅ Verified and credited" if decision == "approve" else "❌ Rejected"
+    by = sender.get("first_name") or "admin"
+    try:
+        await telegram_api("editMessageText", {"chat_id": msg["chat"]["id"], "message_id": msg["message_id"],
+                                               "text": f"{msg.get('text', tid)}\n\n{verdict} by {by}", "reply_markup": {"inline_keyboard": []}})
+    except Exception:
+        pass
+    await telegram_api("answerCallbackQuery", {"callback_query_id": cb_id, "text": "Done"})
+    return {"ok": True}
 

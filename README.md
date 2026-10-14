@@ -62,3 +62,19 @@ Create a new Web Service from this repository. Build command: `pip install -r re
 - Add admin review tooling, audit logs, rate limiting, monitoring, and backups.
 - Verify every payment from the receiving account before crediting any wallet.
 - Never treat a submitted transfer reference or unique decimal amount as proof of payment.
+
+## Supplier integration
+
+Plans are imported from the supplier's reseller API and sold at your margin.
+
+- `SUPPLIER_API_KEY` (required): your reseller API key. Keep it in the host's secret settings, never in the repo.
+- `SUPPLIER_API_BASE` (optional): defaults to the Gemini Pro reseller endpoint.
+- `CATALOG_SYNC_MINUTES` (optional): how often plans and stock refresh. Default 30.
+
+Set margins and payment addresses in the admin console under Catalog and Settings.
+
+How orders are handled:
+- A purchase re-checks the live supplier price and stock, then debits the customer's wallet.
+- If the supplier clearly rejects the order (for example insufficient supplier balance), the wallet is refunded automatically.
+- If the result is unclear (a timeout or an ambiguous error), the order is marked "Needs review" and is **not** refunded automatically, because the supplier may already have charged. Check the supplier's order list and resolve it in the admin console.
+

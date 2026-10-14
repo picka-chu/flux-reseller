@@ -20,7 +20,7 @@ export type Tone = "up" | "down" | "warn" | "neutral";
 export function statusTone(status: string): Tone {
   if (["approved", "delivered", "active"].includes(status)) return "up";
   if (["rejected", "failed", "refunded", "expired"].includes(status)) return "down";
-  if (["pending", "pending_review", "processing"].includes(status)) return "warn";
+  if (["pending", "pending_review", "processing", "needs_review"].includes(status)) return "warn";
   return "neutral";
 }
 

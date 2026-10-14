@@ -46,7 +46,9 @@ export function PlanCard({ product, onClick }: { product: Product; onClick: () =
     <button onClick={onClick} className="card card-raised group flex w-full flex-col p-5 text-left transition hover:border-ink/15 active:scale-[0.99]">
       <div className="flex items-start justify-between gap-3">
         <span data-accent={product.accent} className="tile grid h-12 w-12 place-items-center rounded-2xl text-[20px] font-bold">{product.icon}</span>
-        {product.tag && <span className="rounded-full bg-fill px-2.5 py-1 text-[11px] font-semibold text-muted">{product.tag}</span>}
+        {!product.in_stock
+          ? <span className="rounded-full bg-down/10 px-2.5 py-1 text-[11px] font-semibold text-down">Sold out</span>
+          : product.tag && <span className="rounded-full bg-fill px-2.5 py-1 text-[11px] font-semibold text-muted">{product.tag}</span>}
       </div>
       <p className="mt-5 text-[13px] font-medium text-muted">{product.category}</p>
       <h3 className="mt-0.5 text-[18px] font-semibold tracking-tight">{product.name}</h3>
@@ -64,7 +66,7 @@ export function PlanCard({ product, onClick }: { product: Product; onClick: () =
           <span className="text-[13px] text-muted">{per}</span>
         </p>
         <span className="btn btn-secondary btn-sm transition group-hover:bg-ink group-hover:text-bg">
-          {product.period === "one-time" ? "Buy" : "Subscribe"}
+          {!product.in_stock ? "Sold out" : product.period === "one-time" ? "Buy" : "Subscribe"}
         </span>
       </div>
     </button>
