@@ -132,6 +132,12 @@ async def configure_telegram_webhook():
     # Render exposes RENDER_EXTERNAL_URL automatically. Setting a webhook enables /start replies.
     if BOT_TOKEN and WEBAPP_URL.startswith("https://"):
         try:
+            await telegram_api("setMyCommands", {"commands": [
+                {"command": "start", "description": "Open the FLUX store"},
+                {"command": "balance", "description": "Check your wallet balance"},
+                {"command": "orders", "description": "View your recent orders"},
+                {"command": "help", "description": "Get help and safety guidance"}
+            ]})
             await telegram_api("setWebhook", {
                 "url": WEBAPP_URL + "/telegram/webhook/" + WEBHOOK_SECRET,
                 "secret_token": WEBHOOK_SECRET,
@@ -278,6 +284,7 @@ def create_topup(b:TopupCreate,u=Depends(current_user)):
     if abs(b.amount-round(b.amount))>1e-9: raise HTTPException(400,"Custom top-ups must be whole-dollar amounts")
     cents=round(b.amount*100)
     with db() as c:
+        c.execute("UPDATE topups SET status='expired' WHERE status='pending' AND expires_at<=?", (datetime.now(timezone.utc).isoformat(),))
         for _ in range(100):
             expected=cents*10+secrets.randbelow(999)+1
             if not c.execute("SELECT 1 FROM topups WHERE method=? AND expected_millis=? AND status='pending'",(method,expected)).fetchone(): break
@@ -292,6 +299,9 @@ def verify(tid:str,b:VerifyRequest,u=Depends(current_user)):
         row=c.execute("SELECT * FROM topups WHERE id=? AND telegram_id=?",(tid,u["id"])).fetchone()
         if not row: raise HTTPException(404,"Top-up not found")
         if row["status"]!="pending": raise HTTPException(400,"This top-up is no longer pending")
+        if row["expires_at"] <= datetime.now(timezone.utc).isoformat():
+            c.execute("UPDATE topups SET status='expired' WHERE id=? AND status='pending'", (tid,))
+            return {"status":"expired","message":"This payment request expired. Create a new request."}
         c.execute("UPDATE topups SET tx_reference=? WHERE id=?",(b.tx_reference.strip(),tid))
     return {"status":"pending","message":"Submitted for manual review. Wallet is credited only after an administrator confirms funds arrived."}
 @app.get("/api/orders")
@@ -306,7 +316,8 @@ def create_order(b:OrderCreate,u=Depends(current_user)):
     with db() as c:
         row=c.execute("SELECT balance_cents FROM users WHERE telegram_id=?",(u["id"],)).fetchone()
         if row["balance_cents"]<cents: raise HTTPException(400,"Insufficient balance. Add funds first.")
-        c.execute("UPDATE users SET balance_cents=balance_cents-? WHERE telegram_id=?",(cents,u["id"]))
+        updated = c.execute("UPDATE users SET balance_cents=balance_cents-? WHERE telegram_id=? AND balance_cents>=?",(cents,u["id"],cents))
+        if updated.rowcount != 1: raise HTTPException(400,"Insufficient balance. Add funds first.")
         c.execute("INSERT INTO orders(id,telegram_id,product_id,price_cents,status,created_at) VALUES(?,?,?,?,?,?)",(oid,u["id"],p["id"],cents,"pending_review",datetime.now(timezone.utc).isoformat()))
         c.execute("INSERT INTO ledger(id,telegram_id,delta_cents,reason,reference,created_at) VALUES(?,?,?,?,?,?)",("LG-"+secrets.token_hex(5),u["id"],-cents,"order",oid,datetime.now(timezone.utc).isoformat()))
     return {"id":oid,"status":"pending_review","message":"Order recorded; supplier fulfillment is not configured yet."}
