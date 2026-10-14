@@ -80,7 +80,11 @@ body {
 }
 input, textarea, [data-selectable] { -webkit-user-select: text; user-select: text; }
 html, body { touch-action: manipulation; }
-.app-shell { min-height: var(--app-h, 100dvh); }
+.app-shell { min-height: var(--app-h, 100dvh); width: 100%; min-width: 0; }
+#root { width: 100%; min-width: 0; overflow-x: clip; }
+img, video, canvas, svg { max-width: 100%; }
+.card, button, section, main { min-width: 0; }
+button { overflow-wrap: anywhere; }
 button, input { font: inherit; color: inherit; }
 button { cursor: pointer; touch-action: manipulation; }
 button:disabled { cursor: not-allowed; }
