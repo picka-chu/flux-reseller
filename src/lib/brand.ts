@@ -1,2 +1,2 @@
-/** Store name shown across the app. Change it here (and BRAND_NAME on the server). */
-export const BRAND = "Storefront";
+/** Product name used for app metadata and shared integrations. */
+export const BRAND = "FLUX";
