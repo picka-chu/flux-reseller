@@ -2,8 +2,8 @@
 
 FLUX is a Telegram Mini App starter for browsing digital products, requesting wallet top-ups, and placing orders.
 
-## Status: starter scaffold
-This is not production-ready for real payments or automated fulfillment. Sample products and prices are placeholders. Top-ups require an administrator to confirm that funds actually arrived. Supplier API integration is not included yet.
+## Current build\n- Dedicated Home, Wallet, Orders, and Profile pages with adaptive light/dark themes, professional typography, and Lucide icons.\n- Telegram bot commands: `/start`, `/help`, `/balance`, and `/orders`.\n- Admin-only bot commands: `/pending`, `/stats`, `/approve TOPUP_ID`, and `/reject TOPUP_ID`. Verify funds in the receiving account before using `/approve`.\n- GitHub Actions checks Python and JavaScript syntax on pushes and pull requests.\n\n## Status: starter scaffold
+This is not production-ready for real payments or automated fulfillment. The supplier integration, customer delivery flow, and complete order-review/refund tooling are not implemented yet. Sample products and prices are placeholders. Top-ups require an administrator to confirm that funds actually arrived. Supplier API integration is not included yet.
 
 ## Run locally
 ```bash
