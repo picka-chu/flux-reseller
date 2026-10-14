@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+import httpx
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 DATABASE_URL = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL", "")
@@ -14,6 +15,8 @@ DB_PATH = os.getenv("DATABASE_PATH", os.path.join(ROOT, "flux.db"))
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 ADMIN_IDS = {int(x) for x in os.getenv("ADMIN_TELEGRAM_IDS", "").split(",") if x.strip().isdigit()}
 TTL = int(os.getenv("PAYMENT_TTL_MINUTES", "20"))
+WEBAPP_URL = os.getenv("FLUX_WEBAPP_URL", os.getenv("RENDER_EXTERNAL_URL", "")).rstrip("/")
+WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", secrets.token_urlsafe(32))
 app = FastAPI(title="FLUX API", version="0.1.0")
 app.mount("/static", StaticFiles(directory=os.path.join(ROOT, "static")), name="static")
 
@@ -113,7 +116,60 @@ def admin(u=Depends(current_user)):
     if u["id"] not in ADMIN_IDS: raise HTTPException(403,"Admin access required")
     return u
 
-@app.get("/")
+async def telegram_api(method, payload):
+    if not BOT_TOKEN:
+        return None
+    async with httpx.AsyncClient(timeout=10) as client:
+        response = await client.post(f"https://api.telegram.org/bot{BOT_TOKEN}/{method}", json=payload)
+        response.raise_for_status()
+        result = response.json()
+        if not result.get("ok"):
+            raise RuntimeError("Telegram API request failed")
+        return result.get("result")
+
+@app.on_event("startup")
+async def configure_telegram_webhook():
+    # Render exposes RENDER_EXTERNAL_URL automatically. Setting a webhook enables /start replies.
+    if BOT_TOKEN and WEBAPP_URL.startswith("https://"):
+        try:
+            await telegram_api("setWebhook", {
+                "url": WEBAPP_URL + "/telegram/webhook/" + WEBHOOK_SECRET,
+                "secret_token": WEBHOOK_SECRET,
+                "allowed_updates": ["message"]
+            })
+        except Exception as exc:
+            print(f"Telegram webhook setup failed: {type(exc).__name__}: {exc}")
+
+@app.post("/telegram/webhook/{secret}")
+async def telegram_webhook(secret: str, update: dict):
+    if not hmac.compare_digest(secret, WEBHOOK_SECRET):
+        raise HTTPException(403, "Forbidden")
+    message = update.get("message") or {}
+    chat = message.get("chat") or {}
+    user = message.get("from") or {}
+    text_in = (message.get("text") or "").strip()
+    if not chat.get("id") or not text_in:
+        return {"ok": True}
+    if text_in.split()[0].split("@")[0] == "/start":
+        first = user.get("first_name") or "there"
+        keyboard = {"inline_keyboard": [[{"text": "Open FLUX", "web_app": {"url": WEBAPP_URL}}]]} if WEBAPP_URL.startswith("https://") else None
+        payload = {
+            "chat_id": chat["id"],
+            "text": f"Welcome to FLUX, {first}!\\n\\nYour digital essentials in one place. Open the app to browse products, manage your wallet, and track orders.",
+        }
+        if keyboard:
+            payload["reply_markup"] = keyboard
+        else:
+            payload["text"] += "\\n\\nThe app is being configured. Please try again shortly."
+        try:
+            await telegram_api("sendMessage", payload)
+        except Exception as exc:
+            print(f"Telegram /start reply failed: {type(exc).__name__}: {exc}")
+    elif text_in.startswith("/help"):
+        await telegram_api("sendMessage", {"chat_id": chat["id"], "text": "FLUX help: use /start to open the app. Wallet credits require administrator verification. Never send funds until payment instructions are shown by the official store."})
+    return {"ok": True}
+
+@app.get("/") 
 def home(): return FileResponse(os.path.join(ROOT,"static","index.html"))
 @app.get("/health")
 def health(): return {"status":"ok","service":"flux-api"}
