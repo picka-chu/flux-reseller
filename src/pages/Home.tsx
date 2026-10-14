@@ -22,7 +22,7 @@ export function Home({ me, meLoading, feed, feedLoading, feedError, onBuy, onTop
 
       <AdSlot placement="home" />
 
-      {feedLoading && !feed ? (
+      {feedLoading ? (
         <div className="space-y-8">
           {[0, 1].map((i) => (
             <div key={i}>
@@ -44,7 +44,7 @@ export function Home({ me, meLoading, feed, feedLoading, feedError, onBuy, onTop
             </div>
             <div className="scroll-x -mx-5 flex snap-x gap-3 overflow-x-auto px-5 pb-1">
               {section.items.map((p) => (
-                <div key={p.id} className="w-[156px] shrink-0 snap-start">
+                <div key={p.id} className="w-[min(156px,43vw)] shrink-0 snap-start">
                   <PlanCard product={p} onClick={() => onBuy(p)} />
                 </div>
               ))}
