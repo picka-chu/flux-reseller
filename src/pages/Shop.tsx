@@ -31,7 +31,7 @@ export function Shop({ products, productsLoading, productsError, onBuy, onRetry 
 
       <label className="mb-3 flex h-12 items-center gap-2.5 rounded-full bg-fill px-4 text-muted focus-within:ring-2 focus-within:ring-brand">
         <Search size={18} />
-        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search subscriptions" className="min-w-0 flex-1 bg-transparent text-[15px] text-ink outline-none placeholder:text-muted" />
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search subscriptions" className="min-w-0 flex-1 bg-transparent text-[16px] text-ink outline-none placeholder:text-muted" />
       </label>
       <div className="scroll-x -mx-5 mb-5 flex gap-2 overflow-x-auto px-5">
         {categories.map((c) => (

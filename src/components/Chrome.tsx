@@ -36,7 +36,7 @@ export function Avatar({ name, size = 36 }: { name?: string; size?: number }) {
 
 export function Header({ onHome, onProfile, name }: { onHome: () => void; onProfile: () => void; name?: string }) {
   return (
-    <header className="sticky top-0 z-20 -mx-5 flex h-16 items-center justify-between bg-bg/85 px-5 backdrop-blur-xl">
+    <header className="sticky top-0 z-20 -mx-5 flex h-[calc(56px+env(safe-area-inset-top))] items-center justify-between bg-bg/90 px-5 pt-[env(safe-area-inset-top)] backdrop-blur-xl">
       <button onClick={onHome} className="flex items-center gap-2.5" aria-label={`${BRAND} home`}>
         <BrandMark />
         <span className="text-[16px] font-semibold tracking-tight">{BRAND}</span>

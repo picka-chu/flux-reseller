@@ -55,7 +55,7 @@ export default function App() {
 
   return (
     <ToastProvider>
-      <div className="mx-auto min-h-dvh max-w-2xl px-5 pb-32">
+      <div className="app-shell mx-auto max-w-2xl px-5 pb-[calc(112px+env(safe-area-inset-bottom))]">
         <Header name={me.data?.first_name} onHome={() => go("home")} onProfile={() => go("profile")} />
         <main key={tab}>
           {tab === "home" && (

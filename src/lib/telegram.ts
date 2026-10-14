@@ -4,6 +4,7 @@ export interface TgWebApp {
   colorScheme: "light" | "dark";
   platform?: string;
   initDataUnsafe?: { user?: { first_name?: string; username?: string; photo_url?: string } };
+  viewportStableHeight?: number;
   ready(): void;
   expand(): void;
   disableVerticalSwipes?(): void;
@@ -36,6 +37,13 @@ export function initTelegram() {
     tg?.expand();
     tg?.disableVerticalSwipes?.();
   } catch { /* older clients */ }
+  // Use Telegram's stable height so the layout doesn't jump when the toolbar shows or hides.
+  const setHeight = () => {
+    const h = tg?.viewportStableHeight;
+    if (h) document.documentElement.style.setProperty("--app-h", `${h}px`);
+  };
+  setHeight();
+  try { tg?.onEvent("viewportChanged", setHeight); } catch { /* older clients */ }
 }
 
 /** Native-feeling haptics; silently no-ops outside Telegram. */

@@ -3,7 +3,7 @@ import { tg } from "../lib/telegram";
 
 export type ThemeMode = "auto" | "light" | "dark";
 const KEY = "flux-theme";
-const COLORS = { light: "#ffffff", dark: "#0a0b0d" };
+const COLORS = { light: "#fbfaf8", dark: "#0b0b0d" };
 
 const read = (): ThemeMode => {
   try { const v = localStorage.getItem(KEY); if (v === "light" || v === "dark") return v; } catch { /* storage blocked */ }
