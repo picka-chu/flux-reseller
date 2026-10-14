@@ -16,10 +16,8 @@ jobs:
         with:
           node-version: "20"
       - name: Install frontend dependencies
-        run: npm install
-      - name: Build React and Tailwind frontend
+        run: npm ci
+      - name: Typecheck and build React frontend
         run: npm run build
       - name: Check Python syntax
         run: python -m py_compile main.py
-      - name: Check legacy JavaScript syntax
-        run: node --check static/app.js

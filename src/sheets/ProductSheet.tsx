@@ -1,0 +1,39 @@
+import { useState } from "react";
+import { Button, Notice, useToast } from "../components/ui";
+import { post } from "../lib/api";
+import { money } from "../lib/format";
+import type { Me, Product } from "../lib/types";
+
+export function ProductSheet({ product, me, onPurchased, onTopup }: { product: Product; me: Me | null; onPurchased: (orderId: string) => void; onTopup: () => void }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const short = me !== null && me.balance < product.price;
+
+  const buy = async () => {
+    setBusy(true);
+    try { const o = await post<{ id: string }>("/api/orders", { product_id: product.id }); onPurchased(o.id); }
+    catch (e) { toast(e instanceof Error ? e.message : "Request failed", "error"); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <>
+      <div className="flex flex-col items-center pb-5 pt-4 text-center">
+        <span data-accent={product.accent} className="tile grid h-16 w-16 place-items-center rounded-full text-[28px] font-bold">{product.icon}</span>
+        <h2 className="mt-3 text-[24px] font-bold tracking-tight">{product.name}</h2>
+        <p className="text-[14px] text-muted">{product.category}</p>
+        <p className="num mt-4 text-[40px] font-bold leading-none">{money(product.price)}</p>
+        <p className="mt-1 text-[13px] text-muted">One-time purchase</p>
+      </div>
+      <p className="mb-4 text-center text-[14px] leading-relaxed text-muted">{product.description}</p>
+      <div className="card divide-y divide-line">
+        <div className="flex justify-between px-4 py-3.5 text-[15px]"><span className="text-muted">Price</span><b className="num">{money(product.price)}</b></div>
+        <div className="flex justify-between px-4 py-3.5 text-[15px]"><span className="text-muted">Your balance</span><b className={`num ${short ? "text-down" : ""}`}>{me ? money(me.balance) : "—"}</b></div>
+      </div>
+      <Notice>Supplier delivery isn’t configured yet. Orders are recorded for manual review and aren’t fulfilled automatically.</Notice>
+      {short
+        ? <Button full size="lg" onClick={onTopup}>Add funds to continue</Button>
+        : <Button full size="lg" loading={busy} disabled={!me} onClick={buy}>{me ? `Buy for ${money(product.price)}` : "Open in Telegram to buy"}</Button>}
+    </>
+  );
+}
