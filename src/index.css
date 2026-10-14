@@ -1,0 +1,46 @@
+@import "tailwindcss";
+
+:root {
+  font-family: "DM Sans", Inter, ui-sans-serif, system-ui, sans-serif;
+  color-scheme: light;
+  --bg: #ffffff; --surface: #ffffff; --surface2: #f6f8fc; --line: #e7eaf1;
+  --text: #121827; --muted: #6b7280; --blue: #3155ff; --blue-soft: #eef1ff;
+  --success: #0d9668; --danger: #c83d53;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0a0e16; --surface: #111722; --surface2: #171f2c; --line: #273143;
+  --text: #f4f6fa; --muted: #9aa5b5; --blue: #7793ff; --blue-soft: #1a2546;
+  --success: #49d6a1; --danger: #ff8795;
+}
+* { box-sizing: border-box; }
+html { background: var(--bg); scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--text); -webkit-font-smoothing: antialiased; padding-top: env(safe-area-inset-top); }
+button, input { font: inherit; }
+button { cursor: pointer; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+::selection { background: var(--blue-soft); }
+.app-shell { min-height: 100dvh; background: var(--bg); color: var(--text); }
+.display-font { font-family: Manrope, ui-sans-serif, system-ui, sans-serif; }
+.panel { border: 1px solid var(--line); background: var(--surface); border-radius: 18px; }
+.muted { color: var(--muted); }
+.eyebrow { color: var(--blue); font-size: 10px; line-height: 1.4; letter-spacing: .15em; font-weight: 800; }
+.btn-primary { display:inline-flex; align-items:center; justify-content:center; gap:8px; border:0; border-radius:12px; background:var(--blue); color:white; padding:12px 16px; font-size:12px; font-weight:700; transition:opacity .15s, transform .15s; }
+.btn-primary:active { transform:scale(.98); }
+.btn-primary:disabled { opacity:.5; cursor:not-allowed; }
+.btn-secondary { display:inline-flex; align-items:center; justify-content:center; gap:7px; border:1px solid var(--line); border-radius:11px; background:var(--surface); color:var(--text); padding:10px 12px; font-size:11px; font-weight:700; }
+.input { width:100%; min-width:0; background:var(--surface); border:1px solid var(--line); border-radius:11px; color:var(--text); padding:12px 13px; outline:none; }
+.input:focus { border-color:var(--blue); }
+.tab-button { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; min-width:58px; padding:4px 10px; border:0; background:transparent; color:var(--muted); font-size:10px; font-weight:600; }
+.tab-button.active { color:var(--blue); }
+.tab-button svg { width:20px; height:20px; stroke-width:1.8; }
+.product-icon { display:grid; place-items:center; width:44px; height:44px; border-radius:13px; font-size:19px; font-weight:800; background:var(--blue-soft); color:var(--blue); }
+.status-pill { display:inline-flex; align-items:center; border-radius:999px; padding:4px 8px; font-size:9px; font-weight:700; text-transform:capitalize; background:var(--surface2); color:var(--muted); }
+.status-pill.approved, .status-pill.delivered { color:var(--success); background:color-mix(in srgb,var(--success) 11%,var(--surface)); }
+.status-pill.rejected, .status-pill.failed { color:var(--danger); background:color-mix(in srgb,var(--danger) 10%,var(--surface)); }
+.sheet-backdrop { position:fixed; inset:0; z-index:30; display:flex; align-items:flex-end; justify-content:center; padding:12px; background:rgba(4,9,24,.52); backdrop-filter:blur(4px); }
+.sheet { width:min(100%,520px); max-height:min(88dvh,760px); overflow:auto; border:1px solid var(--line); border-radius:24px 24px 18px 18px; background:var(--bg); padding:24px; padding-bottom:calc(24px + env(safe-area-inset-bottom)); animation:sheet-up .18s ease-out; }
+@keyframes sheet-up { from { transform:translateY(18px); opacity:.6 } to { transform:translateY(0); opacity:1 } }
+.toast { position:fixed; z-index:50; left:50%; bottom:calc(88px + env(safe-area-inset-bottom)); transform:translate(-50%,12px); opacity:0; pointer-events:none; border:1px solid var(--line); background:var(--text); color:var(--bg); border-radius:12px; padding:11px 15px; font-size:12px; max-width:calc(100vw - 32px); transition:all .18s; }
+.toast.show { opacity:1; transform:translate(-50%,0); }
+@media (min-width:768px) { .sheet-backdrop { align-items:center; } .sheet { border-radius:24px; } }
