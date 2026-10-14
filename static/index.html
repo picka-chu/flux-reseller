@@ -1,12 +1,46 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#ffffff"><title>FLUX — Digital, simplified</title><link rel="stylesheet" href="/static/styles.css"><script src="https://telegram.org/js/telegram-web-app.js"></script></head>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#ffffff"><meta name="color-scheme" content="light dark">
+<title>FLUX — Digital, simplified</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/styles.css">
+<script src="https://telegram.org/js/telegram-web-app.js"></script><script src="https://unpkg.com/lucide@latest"></script>
+</head>
 <body><main class="app">
-<section class="welcome"><p class="eyebrow">DIGITAL, SIMPLIFIED</p><h1>Everything digital.<br><span>One wallet.</span></h1><p class="muted">Your digital essentials, in one place.</p></section>
-<section class="wallet"><div><p class="wallet-label">AVAILABLE BALANCE</p><div id="balance" class="balance">$0.00</div><p id="walletStatus" class="wallet-status">Connecting…</p></div><button class="primary" data-tab="topup">＋ Add funds</button></section>
-<section class="section-head"><div><p class="eyebrow">THE COLLECTION</p><h2>Explore products</h2></div><span class="count">CURATED DIGITAL</span></section>
-<div class="search"><span>⌕</span><input id="search" placeholder="Search products..." autocomplete="off"></div>
-<nav class="categories"><button class="active" data-category="all">All</button><button data-category="popular">Popular</button><button data-category="AI tools">AI tools</button><button data-category="Music">Music</button><button data-category="Entertainment">Entertainment</button><button data-category="Design">Design</button><button data-category="Gaming">Gaming</button></nav>
-<section id="products" class="products"><div class="loading-card">Loading collection…</div></section>
-<footer><span>FLUX</span><span>Digital, simplified.</span></footer></main>
-<nav class="bottom-nav"><button class="tab active" data-tab="home"><span>⌂</span>Home</button><button class="tab" data-tab="topup"><span>＋</span>Wallet</button><button class="tab" data-tab="orders"><span>▤</span>Orders</button><button class="tab" data-tab="profile"><span>◉</span>Profile</button></nav>
-<div id="backdrop" class="backdrop"><section class="sheet"><button id="closeSheet" class="close">×</button><div id="sheetContent"></div></section></div><div id="toast" class="toast"></div><script src="/static/app.js"></script></body></html>
+<header class="page-head"><a class="brand" href="#" data-tab="home" aria-label="FLUX home"><span class="brand-mark">F</span><span>FLUX</span></a><button class="icon-btn" data-tab="profile" aria-label="Open profile"><i data-lucide="circle-user-round"></i></button></header>
+<section class="page active" id="page-home" data-page="home">
+<div class="welcome"><p class="eyebrow"><span class="live-dot"></span> DIGITAL, SIMPLIFIED</p><h1>Everything digital.<br><span>One wallet.</span></h1><p class="muted">Your digital essentials, all in one place.</p></div>
+<section class="wallet-card"><div class="wallet-top"><span class="wallet-label"><i data-lucide="wallet"></i> AVAILABLE BALANCE</span><span class="secure-label"><i data-lucide="shield-check"></i> Secure wallet</span></div><div id="balance" class="balance">$0.00</div><div class="wallet-bottom"><span id="walletStatus" class="wallet-status">Connecting to your account…</span><button class="primary" data-tab="wallet"><i data-lucide="plus"></i> Add funds</button></div></section>
+<section class="section-head"><div><p class="eyebrow">THE COLLECTION</p><h2>Explore products</h2></div><span class="count">DIGITAL GOODS</span></section>
+<label class="search"><i data-lucide="search"></i><input id="search" placeholder="Search products..." autocomplete="off"><kbd>⌘ K</kbd></label>
+<nav class="categories" aria-label="Product categories"><button class="active" data-category="all">All products</button><button data-category="popular">Popular</button><button data-category="AI tools">AI tools</button><button data-category="Music">Music</button><button data-category="Entertainment">Entertainment</button><button data-category="Design">Design</button><button data-category="Gaming">Gaming</button></nav>
+<section id="products" class="products"><div class="loading-card"><i data-lucide="loader-circle"></i> Loading collection…</div></section>
+<div class="help-strip"><span class="help-icon"><i data-lucide="message-circle-question"></i></span><div><b>Need a hand?</b><p>Our support team can help with orders and payments.</p></div><button class="icon-btn" data-action="help" aria-label="Help"><i data-lucide="arrow-up-right"></i></button></div>
+</section>
+<section class="page" id="page-wallet" data-page="wallet">
+<div class="page-title"><p class="eyebrow">YOUR MONEY</p><h1>Wallet</h1><p class="muted">Manage your balance and track funding requests.</p></div>
+<div class="wallet-card wallet-page-card"><span class="wallet-label"><i data-lucide="wallet"></i> AVAILABLE BALANCE</span><div id="walletBalance" class="balance">$0.00</div><p class="wallet-status">USD wallet · Manual payment review</p><button class="primary full" id="startTopup"><i data-lucide="plus"></i> Add funds</button></div>
+<div class="section-head"><div><p class="eyebrow">FUNDING</p><h2>Recent top-ups</h2></div><button class="text-action" id="refreshTopups"><i data-lucide="refresh-cw"></i> Refresh</button></div>
+<div id="topupHistory" class="list-panel"><div class="loading-card">Loading your requests…</div></div>
+<div class="notice"><i data-lucide="info"></i><span>Wallet credits are added only after an administrator verifies that the funds arrived. A transaction reference by itself is not proof of payment.</span></div>
+</section>
+<section class="page" id="page-orders" data-page="orders">
+<div class="page-title"><p class="eyebrow">YOUR ACTIVITY</p><h1>Orders</h1><p class="muted">Your purchases and their current status, all in one place.</p></div>
+<div class="stat-grid"><div class="stat-card"><span>All orders</span><b id="orderCount">—</b><i data-lucide="package"></i></div><div class="stat-card"><span>In progress</span><b id="activeOrderCount">—</b><i data-lucide="clock-3"></i></div></div>
+<div class="section-head"><div><p class="eyebrow">ORDER HISTORY</p><h2>Recent activity</h2></div><button class="text-action" id="refreshOrders"><i data-lucide="refresh-cw"></i> Refresh</button></div>
+<div id="ordersList" class="list-panel"><div class="loading-card">Loading your orders…</div></div>
+</section>
+<section class="page" id="page-profile" data-page="profile">
+<div class="page-title"><p class="eyebrow">YOUR SPACE</p><h1>Profile</h1><p class="muted">Your FLUX account, preferences, and support.</p></div>
+<div class="profile-card"><div class="profile-avatar" id="profileAvatar">F</div><div class="profile-info"><h2 id="profileName">Welcome to FLUX</h2><p id="profileHandle">Telegram account</p><span class="verified"><i data-lucide="badge-check"></i> Connected account</span></div></div>
+<div class="profile-balance"><div><span class="wallet-label">WALLET BALANCE</span><b id="profileBalance">$0.00</b></div><button class="secondary" data-tab="wallet">Manage wallet <i data-lucide="arrow-up-right"></i></button></div>
+<div class="settings-group"><p class="eyebrow">ACCOUNT</p><button class="setting-row" data-tab="orders"><span class="setting-icon"><i data-lucide="package"></i></span><span><b>My orders</b><small>View purchases and delivery status</small></span><i data-lucide="chevron-right"></i></button><button class="setting-row" data-tab="wallet"><span class="setting-icon"><i data-lucide="wallet"></i></span><span><b>Wallet activity</b><small>Top-ups and payment requests</small></span><i data-lucide="chevron-right"></i></button><button class="setting-row" id="themeToggle"><span class="setting-icon"><i data-lucide="sun-moon"></i></span><span><b>Appearance</b><small id="themeLabel">Follow Telegram theme</small></span><i data-lucide="chevron-right"></i></button></div>
+<div class="settings-group"><p class="eyebrow">SUPPORT</p><button class="setting-row" data-action="help"><span class="setting-icon"><i data-lucide="message-circle"></i></span><span><b>Help & support</b><small>Get help with payments or orders</small></span><i data-lucide="arrow-up-right"></i></button><button class="setting-row" data-action="terms"><span class="setting-icon"><i data-lucide="shield-check"></i></span><span><b>Safety & payments</b><small>How FLUX reviews payment requests</small></span><i data-lucide="chevron-right"></i></button></div>
+<div class="profile-foot">FLUX <span>·</span> Digital, simplified.</div>
+</section>
+<footer class="site-footer"><span>FLUX</span><span>Digital, simplified.</span></footer></main>
+<nav class="bottom-nav" aria-label="Main navigation"><button class="tab active" data-tab="home"><i data-lucide="house"></i><span>Home</span></button><button class="tab" data-tab="wallet"><i data-lucide="wallet"></i><span>Wallet</span></button><button class="tab" data-tab="orders"><i data-lucide="package"></i><span>Orders</span></button><button class="tab" data-tab="profile"><i data-lucide="user-round"></i><span>Profile</span></button></nav>
+<div id="backdrop" class="backdrop"><section class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle"><button id="closeSheet" class="close" aria-label="Close"><i data-lucide="x"></i></button><div id="sheetContent"></div></section></div><div id="toast" class="toast" role="status"></div><script src="/static/app.js"></script></body></html>
