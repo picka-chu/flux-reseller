@@ -64,3 +64,6 @@ export interface AdminSettings {
   telegram_wallet_address: string; catalog_synced_at: string | null; catalog_count: number;
   supplier: { configured: boolean; store: string | null; ordering_enabled: boolean | null; balance: number | null; currency: string | null; error: string | null };
 }
+
+export interface SupportMessage { id: string; sender: "customer" | "admin"; body: string; created_at: string }
+export interface SupportState { thread: { id: string; status: string } | null; messages: SupportMessage[] }

@@ -76,6 +76,8 @@ def init_db():
         CREATE TABLE IF NOT EXISTS orders(id TEXT PRIMARY KEY,telegram_id INTEGER NOT NULL,product_id TEXT NOT NULL,price_cents INTEGER NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,delivery_note TEXT);
         CREATE TABLE IF NOT EXISTS catalog(id INTEGER PRIMARY KEY,name TEXT NOT NULL,description TEXT,supplier_price TEXT NOT NULL,currency TEXT,stock INTEGER NOT NULL DEFAULT 0,in_stock INTEGER NOT NULL DEFAULT 0,enabled INTEGER NOT NULL DEFAULT 1,margin_percent REAL,markup_cents INTEGER,category TEXT NOT NULL DEFAULT 'Subscriptions',period TEXT NOT NULL DEFAULT 'one-time',tag TEXT,display_name TEXT,removed INTEGER NOT NULL DEFAULT 0,synced_at TEXT);
         CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS support_threads(id TEXT PRIMARY KEY,telegram_id INTEGER NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS support_messages(id TEXT PRIMARY KEY,thread_id TEXT NOT NULL,sender TEXT NOT NULL,body TEXT NOT NULL,created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS ads(id TEXT PRIMARY KEY,title TEXT NOT NULL,body TEXT,cta TEXT,link_url TEXT,image_url TEXT,placement TEXT NOT NULL,active INTEGER NOT NULL DEFAULT 1,ends_at TEXT,created_at TEXT NOT NULL);
         """)
         # Telegram IDs exceed PostgreSQL's signed 32-bit INTEGER range.
@@ -268,7 +270,8 @@ async def telegram_webhook(secret: str, update: dict, request: Request):
             "/start — welcome and getting started\n"
             "/balance — your wallet balance\n"
             "/orders — your five latest orders\n"
-            "/help — this list\n\n"
+            "/help — this list\n"
+            "Just send a message here to contact support.\n\n"
             "Payments are reviewed by hand. Only send funds to the recipient details published in the app.\n"
             "Never share passwords, login codes, or recovery phrases with anyone, including people claiming to be support."
         )
@@ -332,6 +335,29 @@ async def telegram_webhook(secret: str, update: dict, request: Request):
                         pass
             except HTTPException as exc:
                 await reply(f"Could not process top-up: {exc.detail}")
+    elif command == "/close" and telegram_id in ADMIN_IDS:
+        parts_ = text_in.split()
+        if len(parts_) < 2:
+            await reply("Usage: /close TH-XXXXXXXX")
+        else:
+            await support_close(parts_[1].upper(), telegram_id)
+    elif command == "/cancel" and telegram_id in ADMIN_IDS:
+        set_setting(f"support_reply:{telegram_id}", "")
+        await reply("Reply mode cancelled.")
+    elif not command.startswith("/"):
+        if telegram_id in ADMIN_IDS:
+            quoted = ((message.get("reply_to_message") or {}).get("text") or "")
+            found = TICKET_RE.search(quoted)
+            pending = get_setting(f"support_reply:{telegram_id}")
+            tid = found.group(0) if found else pending
+            if tid:
+                await support_admin_reply(telegram_id, tid, text_in)
+                if not found: set_setting(f"support_reply:{telegram_id}", "")
+            else:
+                await reply("To answer a customer, tap Reply on a support message, or reply to that message.")
+        else:
+            tid = await support_from_customer(telegram_id, first, user.get("username", ""), text_in)
+            await reply(f"Thanks, our team has received your message ({tid}). We'll reply here.")
     elif command.startswith("/"):
         await reply("I did not recognize that command. Use /help for the command list.")
     return {"ok": True}
@@ -968,6 +994,8 @@ async def handle_callback(cb):
     if int(sender.get("id") or 0) not in ADMIN_IDS:
         await telegram_api("answerCallbackQuery", {"callback_query_id": cb_id, "text": "Only store admins can do this.", "show_alert": True})
         return {"ok": True}
+    if (cb.get("data") or "").startswith("sup:"):
+        return await support_callback(cb, int(sender.get("id") or 0))
     parts = (cb.get("data") or "").split(":")
     if len(parts) != 3 or parts[0] != "tp" or parts[1] not in ("ok", "no"):
         await telegram_api("answerCallbackQuery", {"callback_query_id": cb_id, "text": "Unknown action"})
@@ -996,4 +1024,117 @@ async def handle_callback(cb):
         pass
     await telegram_api("answerCallbackQuery", {"callback_query_id": cb_id, "text": "Done"})
     return {"ok": True}
+
+# ── Customer support: threads with replies through the bot ─────────────────
+TICKET_RE = re.compile(r"TH-[A-F0-9]{8}")
+
+class SupportMessageIn(BaseModel):
+    body: str = Field(min_length=1, max_length=1000)
+
+def support_customer_info(telegram_id):
+    with db() as c:
+        row = c.execute("SELECT first_name, username FROM users WHERE telegram_id=?", (telegram_id,)).fetchone()
+    return (row["first_name"], row["username"]) if row else ("Customer", None)
+
+def support_open_thread(telegram_id):
+    with db() as c:
+        row = c.execute("SELECT id FROM support_threads WHERE telegram_id=? AND status='open' ORDER BY updated_at DESC LIMIT 1", (telegram_id,)).fetchone()
+        if row:
+            return row["id"]
+        tid = "TH-" + secrets.token_hex(4).upper()
+        now = datetime.now(timezone.utc).isoformat()
+        c.execute("INSERT INTO support_threads(id,telegram_id,status,created_at,updated_at) VALUES(?,?,?,?,?)", (tid, telegram_id, "open", now, now))
+    return tid
+
+def support_add(thread_id, sender, body):
+    now = datetime.now(timezone.utc).isoformat()
+    with db() as c:
+        c.execute("INSERT INTO support_messages(id,thread_id,sender,body,created_at) VALUES(?,?,?,?,?)",
+                  ("SM-" + secrets.token_hex(5).upper(), thread_id, sender, body, now))
+        c.execute("UPDATE support_threads SET updated_at=?, status='open' WHERE id=?", (now, thread_id))
+
+async def support_notify_admins(thread_id, telegram_id, body):
+    first, username = support_customer_info(telegram_id)
+    handle = f"@{username}" if username else "no username"
+    text = (f"Support message {thread_id}\n"
+            f"From: {first} ({handle})\nTelegram ID: {telegram_id}\n\n{body}\n\n"
+            "Tap Reply, or reply to this message, to answer.")
+    keyboard = {"inline_keyboard": [[{"text": "↩️ Reply", "callback_data": f"sup:reply:{thread_id}"},
+                                     {"text": "✅ Close", "callback_data": f"sup:close:{thread_id}"}]]}
+    for admin_id in ADMIN_IDS:
+        try:
+            await telegram_api("sendMessage", {"chat_id": admin_id, "text": text, "reply_markup": keyboard})
+        except Exception as exc:
+            print(f"Could not notify admin {admin_id}: {type(exc).__name__}")
+
+async def support_from_customer(telegram_id, first, username, body):
+    tid = support_open_thread(telegram_id)
+    support_add(tid, "customer", body)
+    await support_notify_admins(tid, telegram_id, body)
+    return tid
+
+async def support_admin_reply(admin_id, tid, body):
+    with db() as c:
+        row = c.execute("SELECT telegram_id FROM support_threads WHERE id=?", (tid,)).fetchone()
+    if not row:
+        await telegram_api("sendMessage", {"chat_id": admin_id, "text": f"Ticket {tid} was not found."})
+        return
+    support_add(tid, "admin", body)
+    try:
+        await telegram_api("sendMessage", {"chat_id": row["telegram_id"], "text": f"Support reply:\n\n{body}\n\nYou can keep the conversation here or in the app."})
+        await telegram_api("sendMessage", {"chat_id": admin_id, "text": f"Sent to the customer on {tid}."})
+    except Exception:
+        await telegram_api("sendMessage", {"chat_id": admin_id, "text": f"Saved on {tid}, but the customer could not be reached. They may have blocked the bot."})
+
+async def support_close(tid, admin_id):
+    with db() as c:
+        row = c.execute("SELECT telegram_id FROM support_threads WHERE id=?", (tid,)).fetchone()
+        if row:
+            c.execute("UPDATE support_threads SET status='closed', updated_at=? WHERE id=?", (datetime.now(timezone.utc).isoformat(), tid))
+    if not row:
+        await telegram_api("sendMessage", {"chat_id": admin_id, "text": f"Ticket {tid} was not found."})
+        return
+    try:
+        await telegram_api("sendMessage", {"chat_id": row["telegram_id"], "text": f"Your support request {tid} is closed. Send a message any time to open a new one."})
+    except Exception:
+        pass
+    await telegram_api("sendMessage", {"chat_id": admin_id, "text": f"{tid} closed."})
+
+async def support_callback(cb, admin_id):
+    cb_id = cb.get("id")
+    if admin_id not in ADMIN_IDS:
+        await telegram_api("answerCallbackQuery", {"callback_query_id": cb_id, "text": "Only store admins can do this.", "show_alert": True})
+        return {"ok": True}
+    _, action, tid = (cb.get("data") or "").split(":", 2)
+    if action == "reply":
+        set_setting(f"support_reply:{admin_id}", tid)
+        await telegram_api("answerCallbackQuery", {"callback_query_id": cb_id, "text": "Type your reply now"})
+        await telegram_api("sendMessage", {"chat_id": admin_id, "text": f"Type your reply for {tid}. It goes straight to the customer. Send /cancel to stop."})
+    elif action == "close":
+        await support_close(tid, admin_id)
+        await telegram_api("answerCallbackQuery", {"callback_query_id": cb_id, "text": "Closed"})
+    else:
+        await telegram_api("answerCallbackQuery", {"callback_query_id": cb_id, "text": "Unknown action"})
+    return {"ok": True}
+
+@app.get("/api/support")
+def support_get(u=Depends(current_user)):
+    with db() as c:
+        t = c.execute("SELECT id,status FROM support_threads WHERE telegram_id=? ORDER BY updated_at DESC LIMIT 1", (int(u["id"]),)).fetchone()
+        msgs = c.execute("SELECT id,sender,body,created_at FROM support_messages WHERE thread_id=? ORDER BY created_at ASC LIMIT 200",
+                         (t["id"],)).fetchall() if t else []
+    return {"thread": dict(t) if t else None, "messages": [dict(m) for m in msgs]}
+
+@app.post("/api/support/messages")
+async def support_post(b: SupportMessageIn, u=Depends(current_user)):
+    ensure_user(u)
+    tg_id = int(u["id"])
+    since = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+    with db() as c:
+        recent = c.execute("SELECT COUNT(*) n FROM support_messages m JOIN support_threads t ON t.id=m.thread_id "
+                           "WHERE t.telegram_id=? AND m.sender='customer' AND m.created_at>=?", (tg_id, since)).fetchone()["n"]
+    if recent >= 10:
+        raise HTTPException(429, "You're sending messages too quickly. Please wait a minute.")
+    tid = await support_from_customer(tg_id, u.get("first_name"), u.get("username"), b.body.strip())
+    return {"thread_id": tid, "status": "open"}
 

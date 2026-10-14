@@ -5,7 +5,7 @@ import { useBackButton } from "./hooks/useBackButton";
 import { useResource } from "./hooks/useResource";
 import { useTheme } from "./hooks/useTheme";
 import { request } from "./lib/api";
-import { tg } from "./lib/telegram";
+
 import type { Me, Order, Product, Topup } from "./lib/types";
 import { Home } from "./pages/Home";
 import { Orders } from "./pages/Orders";
@@ -13,6 +13,7 @@ import { Shop } from "./pages/Shop";
 import { Profile } from "./pages/Profile";
 import { Wallet } from "./pages/Wallet";
 import { InfoSheet, SuccessSheet } from "./sheets/InfoSheets";
+import { SupportSheet } from "./sheets/SupportSheet";
 import { PaymentSheet } from "./sheets/PaymentSheet";
 import { ProductSheet } from "./sheets/ProductSheet";
 import { TopUpSheet, type TopupCreated } from "./sheets/TopUpSheet";
@@ -23,7 +24,8 @@ type SheetState =
   | { type: "submitted" }
   | { type: "product"; product: Product }
   | { type: "purchased"; id: string }
-  | { type: "info"; kind: "help" | "safety" };
+  | { type: "info"; kind: "safety" }
+  | { type: "support" };
 
 export default function App() {
   const theme = useTheme();
@@ -47,11 +49,7 @@ export default function App() {
   useBackButton(sheet !== null || tab !== "home", () => (sheet ? closeSheet() : go("home")));
 
   const openTopup = () => setSheet({ type: "topup" });
-  const openHelp = () => {
-    const username = (window as unknown as { FLUX_SUPPORT_USERNAME?: string }).FLUX_SUPPORT_USERNAME;
-    if (username && tg?.openTelegramLink) tg.openTelegramLink(`https://t.me/${username}`);
-    else setSheet({ type: "info", kind: "help" });
-  };
+  const openHelp = () => setSheet({ type: "support" });
 
   return (
     <ToastProvider>
@@ -92,6 +90,7 @@ export default function App() {
           )}
           {sheet.type === "purchased" && <SuccessSheet title="Order placed" body={`Order ${sheet.id} was recorded and is waiting for review.`} cta="View orders" onDone={() => go("orders")} />}
           {sheet.type === "info" && <InfoSheet kind={sheet.kind} onClose={closeSheet} />}
+          {sheet.type === "support" && <SupportSheet />}
         </Sheet>
       )}
     </ToastProvider>
