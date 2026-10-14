@@ -179,7 +179,10 @@ async def telegram_webhook(secret: str, update: dict, request: Request):
     command = text_in.split()[0].split("@")[0].lower()
     telegram_id = user.get("id")
     first = user.get("first_name") or "there"
+    is_new = True
     if telegram_id:
+        with db() as c:
+            is_new = c.execute("SELECT 1 FROM users WHERE telegram_id=?", (int(telegram_id),)).fetchone() is None
         ensure_user({"id": int(telegram_id), "username": user.get("username", ""), "first_name": first})
     keyboard = {"inline_keyboard": [[{"text": "Open store", "web_app": {"url": WEBAPP_URL}}]]} if WEBAPP_URL.startswith("https://") else None
 
@@ -190,12 +193,39 @@ async def telegram_webhook(secret: str, update: dict, request: Request):
         await telegram_api("sendMessage", payload)
 
     if command == "/start":
-        welcome = f"Welcome to {BRAND_NAME}, {first}!\n\nYour digital essentials in one place. Browse products, manage wallet requests, and track orders."
+        if is_new:
+            welcome = (
+                f"Welcome to {BRAND_NAME}, {first}! 👋\n\n"
+                "Subscriptions for the apps you use every day, all paid from one wallet.\n\n"
+                "Getting started:\n"
+                "1. Open the store and choose a plan.\n"
+                "2. Add funds: send your payment, then submit its reference in the app.\n"
+                "3. Once an administrator confirms the funds, your wallet is credited.\n"
+                "4. Subscribe and track every purchase under Orders.\n\n"
+                "Payments are reviewed by hand, so your balance updates after confirmation."
+            )
+        else:
+            with db() as c:
+                row = c.execute("SELECT balance_cents FROM users WHERE telegram_id=?", (int(telegram_id),)).fetchone()
+            balance = (row["balance_cents"] if row else 0) / 100
+            welcome = (
+                f"Welcome back, {first}! 👋\n\n"
+                f"Wallet balance: USD {balance:.2f}\n"
+                "Open the store to browse plans, or send /orders to see your recent purchases."
+            )
         if not keyboard:
             welcome += "\n\nThe app link is being configured. Please try again shortly."
         await reply(welcome, keyboard)
     elif command in ("/help", "/commands"):
-        await reply(f"{BRAND_NAME} commands\n/start — open the store\n/balance — view wallet balance\n/orders — recent orders\n/help — this message\n\nPayments are manually reviewed. Never send funds until official recipient instructions are configured.")
+        await reply(
+            f"{BRAND_NAME} help\n\n"
+            "/start — welcome and getting started\n"
+            "/balance — your wallet balance\n"
+            "/orders — your five latest orders\n"
+            "/help — this list\n\n"
+            "Payments are reviewed by hand. Only send funds to the recipient details published in the app.\n"
+            "Never share passwords, login codes, or recovery phrases with anyone, including people claiming to be support."
+        )
     elif command == "/balance":
         with db() as c:
             row = c.execute("SELECT balance_cents FROM users WHERE telegram_id=?", (int(telegram_id),)).fetchone()
@@ -493,4 +523,71 @@ def admin_delete_ad(ad_id: str, u=Depends(admin)):
         if cur.rowcount != 1:
             raise HTTPException(404, "Ad not found")
     return {"id": ad_id, "deleted": True}
+
+# ── Admin dashboard ────────────────────────────────────────────────────────
+def _last_days(n):
+    today = datetime.now(timezone.utc).date()
+    return [(today - timedelta(days=i)).isoformat() for i in range(n - 1, -1, -1)]
+
+def _product_name(pid):
+    return next((p["name"] for p in PRODUCTS if p["id"] == pid), pid)
+
+@app.get("/api/admin/dashboard")
+def admin_dashboard(u=Depends(admin)):
+    now = datetime.now(timezone.utc)
+    days = _last_days(14)
+    since = days[0] + "T00:00:00"
+    with db() as c:
+        def one(sql, params=()):
+            return c.execute(sql, params).fetchone()["n"]
+
+        totals = {
+            "users": one("SELECT COUNT(*) n FROM users"),
+            "orders": one("SELECT COUNT(*) n FROM orders WHERE status!='refunded'"),
+            "revenue": one("SELECT COALESCE(SUM(price_cents),0) n FROM orders WHERE status!='refunded'") / 100,
+            "paying_customers": one("SELECT COUNT(DISTINCT telegram_id) n FROM orders WHERE status!='refunded'"),
+            "pending_topups": one("SELECT COUNT(*) n FROM topups WHERE status='pending'"),
+            "pending_orders": one("SELECT COUNT(*) n FROM orders WHERE status IN ('pending_review','processing')"),
+            "wallet_liabilities": one("SELECT COALESCE(SUM(balance_cents),0) n FROM users") / 100,
+            "approved_topups": one("SELECT COALESCE(SUM(base_cents),0) n FROM topups WHERE status='approved'") / 100,
+            "live_ads": one("SELECT COUNT(*) n FROM ads WHERE active=? AND (ends_at IS NULL OR ends_at>?)", (1, now.isoformat())),
+        }
+
+        order_days = {r["d"]: r for r in c.execute(
+            "SELECT substr(created_at,1,10) d, COUNT(*) n, COALESCE(SUM(price_cents),0) s FROM orders "
+            "WHERE created_at>=? AND status!='refunded' GROUP BY d", (since,)).fetchall()}
+        user_days = {r["d"]: r["n"] for r in c.execute(
+            "SELECT substr(created_at,1,10) d, COUNT(*) n FROM users WHERE created_at>=? GROUP BY d", (since,)).fetchall()}
+        series = []
+        for d in days:
+            o = order_days.get(d)
+            series.append({"date": d, "orders": o["n"] if o else 0,
+                           "revenue": (o["s"] if o else 0) / 100, "customers": user_days.get(d, 0)})
+
+        status_breakdown = [{"status": r["status"], "count": r["n"]} for r in c.execute(
+            "SELECT status, COUNT(*) n FROM orders GROUP BY status ORDER BY n DESC").fetchall()]
+        top_products = [{"product_id": r["product_id"], "name": _product_name(r["product_id"]),
+                         "orders": r["n"], "revenue": r["s"] / 100} for r in c.execute(
+            "SELECT product_id, COUNT(*) n, COALESCE(SUM(price_cents),0) s FROM orders "
+            "WHERE status!='refunded' GROUP BY product_id ORDER BY n DESC LIMIT 5").fetchall()]
+        order_rows = c.execute(
+            "SELECT o.id,o.product_id,o.price_cents,o.status,o.created_at,u.first_name,u.username "
+            "FROM orders o LEFT JOIN users u ON u.telegram_id=o.telegram_id ORDER BY o.created_at DESC LIMIT 8").fetchall()
+        topup_rows = c.execute(
+            "SELECT t.id,t.base_cents,t.method,t.status,t.created_at,u.first_name,u.username "
+            "FROM topups t LEFT JOIN users u ON u.telegram_id=t.telegram_id ORDER BY t.created_at DESC LIMIT 8").fetchall()
+
+    recent = []
+    for r in order_rows:
+        recent.append({"kind": "order", "id": r["id"], "title": _product_name(r["product_id"]),
+                       "subtitle": r["first_name"] or r["username"] or "Customer", "status": r["status"],
+                       "amount": r["price_cents"] / 100, "at": r["created_at"]})
+    for r in topup_rows:
+        recent.append({"kind": "topup", "id": r["id"], "title": f"Top-up · {r['method'].replace('_', ' ').title()}",
+                       "subtitle": r["first_name"] or r["username"] or "Customer", "status": r["status"],
+                       "amount": r["base_cents"] / 100, "at": r["created_at"]})
+    recent.sort(key=lambda x: x["at"], reverse=True)
+
+    return {"generated_at": now.isoformat(), "totals": totals, "series": series,
+            "status_breakdown": status_breakdown, "top_products": top_products, "recent": recent[:10]}
 

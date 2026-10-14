@@ -36,3 +36,15 @@ export interface AdminOrder {
 export interface AdminUser {
   telegram_id: number; username?: string; first_name?: string; balance: number; orders_count: number;
 }
+export interface AdminDashboard {
+  generated_at: string;
+  totals: {
+    users: number; orders: number; revenue: number; paying_customers: number;
+    pending_topups: number; pending_orders: number; wallet_liabilities: number;
+    approved_topups: number; live_ads: number;
+  };
+  series: { date: string; orders: number; revenue: number; customers: number }[];
+  status_breakdown: { status: string; count: number }[];
+  top_products: { product_id: string; name: string; orders: number; revenue: number }[];
+  recent: { kind: "order" | "topup"; id: string; title: string; subtitle: string; status: string; amount: number; at: string }[];
+}

@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "react";
 import {
-  Activity, AlertTriangle, Check, ChevronRight, Clock3, LayoutDashboard, Megaphone, Moon, Package, RefreshCw,
-  Search, ShieldCheck, Sun, Users, Wallet, X, type LucideIcon
+  AlertTriangle, Check, ChevronRight, Coins, LayoutDashboard, Megaphone, Moon, Package, Receipt, RefreshCw,
+  Search, ShieldCheck, Sun, UserPlus, Users, Wallet, X, type LucideIcon
 } from "lucide-react";
 import { BrandMark } from "../components/Chrome";
 import { BRAND } from "../lib/brand";
-import { Button, Empty, StatusPill, ToastProvider, useToast } from "../components/ui";
+import { Button, Empty, Segmented, StatusPill, ToastProvider, useToast } from "../components/ui";
 import { useTheme } from "../hooks/useTheme";
 import { post, request } from "../lib/api";
 import { confirmAction } from "../lib/telegram";
 import { dateTime, money, titleCase } from "../lib/format";
-import type { AdminAd, AdminOrder, AdminOverview, AdminTopup, AdminUser } from "../lib/types";
+import type { AdminAd, AdminDashboard, AdminOrder, AdminOverview, AdminTopup, AdminUser } from "../lib/types";
 
 type Page = "overview" | "topups" | "orders" | "customers" | "ads";
 const NAV: { id: Page; label: string; icon: LucideIcon }[] = [
@@ -37,6 +37,7 @@ function Console() {
   const theme = useTheme();
   const [page, setPage] = useState<Page>("overview");
   const [overview, setOverview] = useState<AdminOverview | null>(null);
+  const [dashboard, setDashboard] = useState<AdminDashboard | null>(null);
   const [topups, setTopups] = useState<AdminTopup[]>([]);
   const [orders, setOrders] = useState<AdminOrder[]>([]);
   const [users, setUsers] = useState<AdminUser[]>([]);
@@ -50,6 +51,7 @@ function Console() {
     setLoading(true); setError("");
     try {
       setOverview(await request<AdminOverview>("/api/admin/overview"));
+      if (page === "overview") setDashboard(await request<AdminDashboard>("/api/admin/dashboard"));
       if (page === "topups") setTopups(await request<AdminTopup[]>("/api/admin/topups"));
       if (page === "orders") setOrders(await request<AdminOrder[]>("/api/admin/orders"));
       if (page === "customers") setUsers(await request<AdminUser[]>("/api/admin/users"));
@@ -119,7 +121,7 @@ function Console() {
             {page !== "overview" && page !== "ads" && <span className="text-[13px] text-muted">{count} records · latest 100</span>}
           </div>
 
-          {page === "overview" && <OverviewPanel o={overview} go={setPage} />}
+          {page === "overview" && <DashboardPanel d={dashboard} o={overview} go={setPage} />}
           {page === "ads" && <AdsPanel ads={ads} reload={load} />}
           {page !== "overview" && page !== "ads" && (
             <>
@@ -183,46 +185,147 @@ function Console() {
   );
 }
 
-function OverviewPanel({ o, go }: { o: AdminOverview | null; go: (p: Page) => void }) {
-  const stats: [LucideIcon, string, number | undefined][] = [
-    [Users, "Registered users", o?.users], [Package, "Total orders", o?.orders],
-    [Clock3, "Pending top-ups", o?.pending_topups], [Activity, "Orders to review", o?.pending_orders]
+function DashboardPanel({ d, o, go }: { d: AdminDashboard | null; o: AdminOverview | null; go: (p: Page) => void }) {
+  const [metric, setMetric] = useState<"revenue" | "orders">("revenue");
+  const today = d?.series.at(-1);
+  const yesterday = d?.series.at(-2);
+  const totalRevenue14 = d ? d.series.reduce((n, x) => n + x.revenue, 0) : 0;
+  const totalOrders14 = d ? d.series.reduce((n, x) => n + x.orders, 0) : 0;
+  const values = d ? d.series.map((x) => (metric === "revenue" ? x.revenue : x.orders)) : [];
+  const peak = Math.max(1, ...values);
+  const conversion = d && d.totals.users ? Math.round((d.totals.paying_customers / d.totals.users) * 100) : 0;
+
+  const vsYesterday = (now?: number, before?: number) => {
+    if (now === undefined || before === undefined) return "";
+    if (before === 0) return now === 0 ? "Same as yesterday" : "Up from zero yesterday";
+    const pct = Math.round(((now - before) / before) * 100);
+    return `${pct >= 0 ? "+" : ""}${pct}% vs yesterday`;
+  };
+  const dayLabel = (iso: string) => new Date(`${iso}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+
+  const kpis: { icon: LucideIcon; label: string; value: string; note: string }[] = [
+    { icon: Coins, label: "Revenue", value: money(d?.totals.revenue), note: vsYesterday(today?.revenue, yesterday?.revenue) },
+    { icon: Receipt, label: "Orders", value: String(d?.totals.orders ?? "—"), note: vsYesterday(today?.orders, yesterday?.orders) },
+    { icon: UserPlus, label: "Customers", value: String(d?.totals.users ?? "—"), note: today ? `${today.customers} new today` : "" },
+    { icon: Users, label: "Paying customers", value: String(d?.totals.paying_customers ?? "—"), note: d ? `${conversion}% of customers` : "" }
   ];
+  const attention: [Page, LucideIcon, string, string, number | undefined][] = [
+    ["topups", Wallet, "Review top-ups", "Confirm transfers arrived before approving", d?.totals.pending_topups ?? o?.pending_topups],
+    ["orders", Package, "Review orders", "Update fulfilment or issue refunds", d?.totals.pending_orders ?? o?.pending_orders],
+    ["ads", Megaphone, "Live ads", "Sponsored placements currently shown", d?.totals.live_ads]
+  ];
+
   return (
-    <>
+    <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        {stats.map(([Icon, label, value]) => (
+        {kpis.map(({ icon: Icon, label, value, note }) => (
           <div key={label} className="card p-5">
-            <span className="mb-4 grid h-10 w-10 place-items-center rounded-full bg-fill"><Icon size={18} /></span>
+            <div className="mb-4 flex items-center justify-between">
+              <span className="grid h-10 w-10 place-items-center rounded-full bg-fill"><Icon size={18} /></span>
+              {note && <span className="text-right text-[12px] font-medium text-muted">{note}</span>}
+            </div>
             <p className="text-[13px] text-muted">{label}</p>
-            <b className="num mt-0.5 block text-[32px] font-bold leading-tight">{value ?? "—"}</b>
+            <b className="num mt-0.5 block text-[28px] font-bold leading-tight">{value}</b>
           </div>
         ))}
       </div>
-      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+        <section className="card p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-[17px] font-bold">Last 14 days</h2>
+              <p className="text-[13px] text-muted">
+                {d ? `${money(totalRevenue14)} revenue · ${totalOrders14} orders` : "Loading…"}
+              </p>
+            </div>
+            <div className="w-56"><Segmented value={metric} onChange={setMetric} options={[{ value: "revenue", label: "Revenue" }, { value: "orders", label: "Orders" }]} /></div>
+          </div>
+          <div className="mt-6 flex h-48 items-end gap-1.5">
+            {d?.series.map((x, i) => {
+              const v = values[i];
+              const h = v > 0 ? Math.max(6, (v / peak) * 100) : 2;
+              return (
+                <div key={x.date} className="group flex h-full flex-1 items-end">
+                  <div
+                    className={`w-full rounded-t-md transition ${v > 0 ? "bg-brand/80 group-hover:bg-brand" : "bg-fill"}`}
+                    style={{ height: `${h}%` }}
+                    title={`${dayLabel(x.date)}: ${metric === "revenue" ? money(x.revenue) : `${x.orders} orders`}`}
+                  />
+                </div>
+              );
+            })}
+          </div>
+          <div className="mt-2 flex justify-between text-[11px] text-muted">
+            <span>{d ? dayLabel(d.series[0].date) : ""}</span><span>Today</span>
+          </div>
+        </section>
+
         <section className="card p-5">
           <h2 className="text-[17px] font-bold">Needs attention</h2>
-          <p className="mb-2 text-[13px] text-muted">Action queue</p>
-          {([["topups", Wallet, "Review top-ups", "Verify incoming transfers", o?.pending_topups], ["orders", Package, "Review orders", "Update status or issue refunds", o?.pending_orders]] as const).map(([id, Icon, t, s, n]) => (
+          <p className="mb-2 text-[13px] text-muted">Work waiting on you</p>
+          {attention.map(([id, Icon, t, s, n]) => (
             <button key={id} onClick={() => go(id)} className="flex w-full items-center gap-3.5 border-t border-line py-3.5 text-left first:border-0">
-              <span className="grid h-10 w-10 place-items-center rounded-full bg-brand-soft text-brand"><Icon size={18} /></span>
-              <span className="flex-1"><b className="block text-[15px]">{t}</b><span className="text-[13px] text-muted">{s}</span></span>
+              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-brand-soft text-brand"><Icon size={18} /></span>
+              <span className="min-w-0 flex-1"><b className="block text-[15px]">{t}</b><span className="block truncate text-[13px] text-muted">{s}</span></span>
               <b className="num text-[17px]">{n ?? "—"}</b><ChevronRight size={18} className="text-muted" />
             </button>
           ))}
-        </section>
-        <section className="card p-5">
-          <h2 className="text-[17px] font-bold">Wallet position</h2>
-          <p className="text-[13px] text-muted">Current customer wallet liabilities</p>
-          <b className="num mt-4 block text-[40px] font-bold leading-none">{money(o?.wallet_liabilities)}</b>
-          <div className="mt-5 border-t border-line pt-4">
-            <p className="text-[13px] text-muted">Approved top-ups (lifetime)</p>
-            <b className="num text-[20px]">{money(o?.approved_topups)}</b>
+          <div className="mt-2 border-t border-line pt-4">
+            <div className="flex justify-between text-[13px]"><span className="text-muted">Wallet liabilities</span><b className="num">{money(d?.totals.wallet_liabilities ?? o?.wallet_liabilities)}</b></div>
+            <div className="mt-2 flex justify-between text-[13px]"><span className="text-muted">Approved top-ups, lifetime</span><b className="num">{money(d?.totals.approved_topups ?? o?.approved_topups)}</b></div>
           </div>
-          <p className="mt-4 text-[12px] leading-relaxed text-muted">Operational totals, not a bank reconciliation. Match credits and refunds against your payment records.</p>
         </section>
       </div>
-    </>
+
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+        <section className="card overflow-hidden">
+          <div className="flex items-center justify-between px-5 pb-2 pt-5">
+            <div><h2 className="text-[17px] font-bold">Recent activity</h2><p className="text-[13px] text-muted">Latest orders and top-up requests</p></div>
+          </div>
+          {d?.recent.length ? (
+            <div className="divide-y divide-line">
+              {d.recent.map((r) => (
+                <button key={`${r.kind}-${r.id}`} onClick={() => go(r.kind === "order" ? "orders" : "topups")} className="grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3.5 px-5 py-3.5 text-left transition hover:bg-fill/60">
+                  <span className="grid h-10 w-10 place-items-center rounded-full bg-fill">{r.kind === "order" ? <Receipt size={17} /> : <Wallet size={17} />}</span>
+                  <span className="min-w-0">
+                    <b className="block truncate text-[14px] font-semibold">{r.title}</b>
+                    <span className="block truncate text-[12px] text-muted">{r.subtitle} · {dateTime(r.at)}</span>
+                  </span>
+                  <span className="text-right">
+                    <b className="num block text-[14px]">{money(r.amount)}</b>
+                    <span className="mt-1 inline-block"><StatusPill status={r.status} /></span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : <Empty icon={Receipt} title={d ? "No activity yet" : "Loading activity"} text={d ? "Orders and top-up requests appear here." : undefined} />}
+        </section>
+
+        <div className="space-y-4">
+          <section className="card p-5">
+            <h2 className="text-[17px] font-bold">Top plans</h2>
+            <p className="mb-4 text-[13px] text-muted">By number of orders, excluding refunds</p>
+            {d?.top_products.length ? d.top_products.map((p) => (
+              <div key={p.product_id} className="mb-4 last:mb-0">
+                <div className="mb-1.5 flex justify-between text-[14px]"><b className="truncate font-semibold">{p.name}</b><span className="num text-muted">{p.orders} · {money(p.revenue)}</span></div>
+                <div className="h-2 overflow-hidden rounded-full bg-fill"><div className="h-full rounded-full bg-brand" style={{ width: `${(p.orders / Math.max(1, d.top_products[0].orders)) * 100}%` }} /></div>
+              </div>
+            )) : <p className="text-[14px] text-muted">No orders yet.</p>}
+          </section>
+
+          <section className="card p-5">
+            <h2 className="text-[17px] font-bold">Order status</h2>
+            <p className="mb-3 text-[13px] text-muted">All orders by current status</p>
+            {d?.status_breakdown.length ? d.status_breakdown.map((s) => (
+              <div key={s.status} className="flex items-center justify-between border-t border-line py-2.5 first:border-0">
+                <StatusPill status={s.status} /><b className="num text-[15px]">{s.count}</b>
+              </div>
+            )) : <p className="text-[14px] text-muted">No orders yet.</p>}
+          </section>
+        </div>
+      </div>
+    </div>
   );
 }
 
