@@ -341,6 +341,64 @@ def create_order(b:OrderCreate,u=Depends(current_user)):
         c.execute("INSERT INTO orders(id,telegram_id,product_id,price_cents,status,created_at) VALUES(?,?,?,?,?,?)",(oid,u["id"],p["id"],cents,"pending_review",datetime.now(timezone.utc).isoformat()))
         c.execute("INSERT INTO ledger(id,telegram_id,delta_cents,reason,reference,created_at) VALUES(?,?,?,?,?,?)",("LG-"+secrets.token_hex(5),u["id"],-cents,"order",oid,datetime.now(timezone.utc).isoformat()))
     return {"id":oid,"status":"pending_review","message":"Order recorded; supplier fulfillment is not configured yet."}
+@app.get("/api/admin/overview")
+def admin_overview(u=Depends(admin)):
+    with db() as c:
+        users_n = c.execute("SELECT COUNT(*) n FROM users").fetchone()["n"]
+        orders_n = c.execute("SELECT COUNT(*) n FROM orders").fetchone()["n"]
+        pending_topups = c.execute("SELECT COUNT(*) n FROM topups WHERE status='pending'").fetchone()["n"]
+        pending_orders = c.execute("SELECT COUNT(*) n FROM orders WHERE status IN ('pending_review','processing')").fetchone()["n"]
+        balance_n = c.execute("SELECT COALESCE(SUM(balance_cents),0) n FROM users").fetchone()["n"]
+        topup_total = c.execute("SELECT COALESCE(SUM(base_cents),0) n FROM topups WHERE status='approved'").fetchone()["n"]
+    return {"users": users_n, "orders": orders_n, "pending_topups": pending_topups,
+            "pending_orders": pending_orders, "wallet_liabilities": balance_n / 100,
+            "approved_topups": topup_total / 100}
+
+@app.get("/api/admin/users")
+def admin_users(u=Depends(admin)):
+    with db() as c:
+        rows = c.execute("""SELECT u.telegram_id,u.username,u.first_name,u.balance_cents,u.created_at,
+            (SELECT COUNT(*) FROM orders o WHERE o.telegram_id=u.telegram_id) AS orders_count
+            FROM users u ORDER BY u.created_at DESC LIMIT 100""").fetchall()
+    return [dict(r, balance=r["balance_cents"] / 100) for r in rows]
+
+@app.get("/api/admin/orders")
+def admin_orders(u=Depends(admin)):
+    with db() as c:
+        rows = c.execute("""SELECT o.*,u.username,u.first_name FROM orders o
+            LEFT JOIN users u ON u.telegram_id=o.telegram_id ORDER BY o.created_at DESC LIMIT 100""").fetchall()
+    return [dict(r, price=r["price_cents"] / 100) for r in rows]
+
+class AdminOrderDecision(BaseModel):
+    status: str
+    note: str | None = None
+
+@app.post("/api/admin/orders/{oid}")
+def admin_decide_order(oid: str, b: AdminOrderDecision, u=Depends(admin)):
+    allowed = {"processing", "delivered", "rejected", "refunded"}
+    if b.status not in allowed:
+        raise HTTPException(400, "Choose processing, delivered, rejected, or refunded")
+    now = datetime.now(timezone.utc).isoformat()
+    with db() as c:
+        row = c.execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Order not found")
+        previous = row["status"]
+        if previous == "refunded":
+            raise HTTPException(409, "This order has already been refunded")
+        if previous == "delivered" and b.status != "delivered":
+            raise HTTPException(409, "Delivered orders cannot be changed or refunded here")
+        if b.status == "refunded":
+            if previous not in ("pending_review", "processing", "rejected"):
+                raise HTTPException(409, "This order cannot be refunded from its current state")
+            c.execute("UPDATE users SET balance_cents=balance_cents+? WHERE telegram_id=?",
+                      (row["price_cents"], row["telegram_id"]))
+            c.execute("INSERT INTO ledger(id,telegram_id,delta_cents,reason,reference,created_at) VALUES(?,?,?,?,?,?)",
+                      ("LG-" + secrets.token_hex(5), row["telegram_id"], row["price_cents"], "order_refund", "REFUND-" + oid, now))
+        c.execute("UPDATE orders SET status=?,delivery_note=COALESCE(?,delivery_note) WHERE id=?",
+                  (b.status, b.note, oid))
+    return {"id": oid, "previous_status": previous, "status": b.status}
+
 @app.get("/api/admin/topups")
 def admin_topups(u=Depends(admin)):
     with db() as c: rows=c.execute("SELECT * FROM topups ORDER BY created_at DESC LIMIT 100").fetchall()
