@@ -17,5 +17,7 @@ jobs:
           node-version: "20"
       - name: Check Python syntax
         run: python -m py_compile main.py
-      - name: Check JavaScript syntax
+      - name: Build React and Tailwind frontend
+        run: npm install && npm run build
+      - name: Check legacy JavaScript syntax
         run: node --check static/app.js
