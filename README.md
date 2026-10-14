@@ -1,8 +1,8 @@
-# Storefront — Subscription Reseller
+# FLUX — Subscription Reseller
 
-Storefront is a Telegram Mini App for browsing subscription plans, requesting wallet top-ups, placing orders, and publishing sponsored ads from the admin console.
+FLUX is a Telegram Mini App for browsing subscription plans, requesting wallet top-ups, placing orders, and publishing sponsored ads from the admin console.
 
-Set `BRAND_NAME` on the server and `BRAND` in `src/lib/brand.ts` to change the store name.
+The customer and admin interfaces use a quiet, logo-free header so the content and current task stay prominent.
 
 ## Current build
 - **React 19 + TypeScript + Vite + Tailwind CSS 4**, with a Coinbase-inspired design system: large balance read-outs, round quick actions, asset-style product rows, pill buttons, bottom sheets and skeleton loading states.
