@@ -258,7 +258,9 @@ def decide_topup_record(tid: str, decision: str, note: str | None = None):
     return {"id": tid, "status": decision + "d", "note": note}
 
 @app.get("/") 
-def home(): return FileResponse(os.path.join(ROOT,"static","index.html"))
+def home():
+    built = os.path.join(ROOT, "frontend_dist", "index.html")
+    return FileResponse(built if os.path.isfile(built) else os.path.join(ROOT, "static", "index.html"))
 @app.get("/health")
 def health(): return {"status":"ok","service":"flux-api"}
 @app.get("/api/config")
