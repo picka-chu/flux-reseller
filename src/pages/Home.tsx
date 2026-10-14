@@ -2,7 +2,6 @@ import { ArrowUpRight, PackageSearch, ShieldCheck } from "lucide-react";
 import { AdSlot, PlanCard, WalletStrip } from "../components/Blocks";
 import { Empty, Notice, SectionHeader, Skeleton } from "../components/ui";
 import { inTelegram } from "../lib/telegram";
-import { BRAND } from "../lib/brand";
 import type { Me, Product } from "../lib/types";
 
 interface Props {
@@ -15,7 +14,7 @@ export function Home({ me, meLoading, products, productsLoading, productsError, 
   return (
     <div className="animate-rise">
       <section className="pb-7 pt-5">
-        <p className="text-[14px] text-muted">{me?.first_name ? "Welcome back" : `Welcome to ${BRAND}`}</p>
+        <p className="text-[14px] text-muted">{me?.first_name ? "Welcome back" : "Welcome"}</p>
         <h1 className="mt-1 text-[30px] font-bold leading-tight tracking-tight">{me?.first_name ?? "Subscriptions, simplified"}</h1>
         <p className="mt-2 text-[15px] leading-relaxed text-muted">Browse premium plans and pay from one wallet.</p>
         <div className="mt-6"><WalletStrip balance={me?.balance} loading={meLoading} onAdd={onTopup} /></div>
@@ -26,11 +25,11 @@ export function Home({ me, meLoading, products, productsLoading, productsError, 
 
       <SectionHeader title="All subscriptions" action={<button onClick={onShop} className="text-[14px] font-semibold text-brand">See all</button>} />
       {productsLoading && !products ? (
-        <div className="grid gap-3 sm:grid-cols-2">{Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-72 !rounded-[20px]" />)}</div>
+        <div className="grid grid-cols-2 gap-3">{Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="aspect-[3/4] !rounded-[18px]" />)}</div>
       ) : productsError && !products ? (
         <div className="card"><Empty icon={PackageSearch} title="Couldn't load plans" text={productsError} action={<button onClick={onRetry} className="btn btn-secondary btn-sm">Try again</button>} /></div>
       ) : products?.length ? (
-        <div className="grid gap-3 sm:grid-cols-2">{products.map((p) => <PlanCard key={p.id} product={p} onClick={() => onBuy(p)} />)}</div>
+        <div className="grid grid-cols-2 gap-3">{products.map((p) => <PlanCard key={p.id} product={p} onClick={() => onBuy(p)} />)}</div>
       ) : (
         <div className="card"><Empty icon={PackageSearch} title="No plans yet" text="New subscriptions will appear here." /></div>
       )}

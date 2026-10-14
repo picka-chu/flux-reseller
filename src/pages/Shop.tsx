@@ -43,7 +43,7 @@ export function Shop({ products, productsLoading, productsError, onBuy, onRetry 
 
       {productsLoading && !products ? <div className="card overflow-hidden"><ListSkeleton rows={5} /></div>
         : productsError && !products ? <div className="card"><Empty icon={PackageSearch} title="Couldn't load plans" text={productsError} action={<button onClick={onRetry} className="btn btn-secondary btn-sm">Try again</button>} /></div>
-        : filtered.length ? <div className="grid gap-3 sm:grid-cols-2">{filtered.map((p) => <PlanCard key={p.id} product={p} onClick={() => onBuy(p)} />)}</div>
+        : filtered.length ? <div className="grid grid-cols-2 gap-3">{filtered.map((p) => <PlanCard key={p.id} product={p} onClick={() => onBuy(p)} />)}</div>
         : <div className="card"><Empty icon={Search} title="No subscriptions found" text="Try another search or category." /></div>}
     </div>
   );

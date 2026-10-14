@@ -3,7 +3,6 @@ import { Avatar } from "../components/Chrome";
 import { MenuRow } from "../components/Blocks";
 import { Segmented } from "../components/ui";
 import { money } from "../lib/format";
-import { BRAND } from "../lib/brand";
 import { inTelegram, tg } from "../lib/telegram";
 import type { ThemeMode } from "../hooks/useTheme";
 import type { Me } from "../lib/types";
@@ -39,7 +38,7 @@ export function Profile({ me, mode, onMode, go, onHelp, onSafety }: Props) {
         <MenuRow icon={MessageCircle} label="Help & support" hint="Questions about orders or payments" onClick={onHelp} />
         <MenuRow icon={ShieldCheck} label="Safety & payments" hint="How deposits are reviewed" onClick={onSafety} />
       </div>
-      <p className="py-8 text-center text-[12px] text-muted">{BRAND} · Subscriptions, simplified</p>
+      <p className="py-8 text-center text-[12px] text-muted">Subscriptions, simplified</p>
     </div>
   );
 }

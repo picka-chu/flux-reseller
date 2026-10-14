@@ -1,5 +1,5 @@
-import { ArrowUpRight, Check, ChevronRight, Plus, type LucideIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { ArrowUpRight, ChevronRight, Plus, type LucideIcon } from "lucide-react";
+import { useState, type ReactNode } from "react";
 import { money, moneyParts, periodSuffix } from "../lib/format";
 import { request } from "../lib/api";
 import { useResource } from "../hooks/useResource";
@@ -39,35 +39,46 @@ export function WalletStrip({ balance, loading, onAdd }: { balance?: number; loa
   );
 }
 
-/** Subscription plan card. */
+/** Product artwork: the plan's image when one exists, otherwise a sticker on a soft colour wash. */
+export function ProductArt({ product, className = "", large = false }: { product: Pick<Product, "accent" | "image_url" | "sticker" | "name">; className?: string; large?: boolean }) {
+  const [broken, setBroken] = useState(false);
+  return (
+    <div
+      data-accent={product.accent}
+      className={`grid place-items-center overflow-hidden ${className}`}
+      style={{ background: "linear-gradient(150deg, color-mix(in srgb, var(--a, var(--brand)) 24%, var(--surface)) 0%, color-mix(in srgb, var(--a, var(--brand)) 7%, var(--surface)) 100%)" }}
+    >
+      {product.image_url && !broken
+        ? <img src={product.image_url} alt={product.name} loading="lazy" onError={() => setBroken(true)} className="h-full w-full object-cover" />
+        : <span aria-hidden="true" className={`select-none leading-none drop-shadow-[0_6px_10px_rgba(0,0,0,0.18)] ${large ? "text-[96px]" : "text-[56px]"}`} style={{ transform: "rotate(-6deg)" }}>{product.sticker}</span>}
+    </div>
+  );
+}
+
+/** Shopping-style product tile for the grid. */
 export function PlanCard({ product, onClick }: { product: Product; onClick: () => void }) {
   const per = periodSuffix(product.period);
+  const [whole, cents] = product.price.toFixed(2).split(".");
   return (
-    <button onClick={onClick} className="card card-raised group flex w-full flex-col p-5 text-left transition hover:border-ink/15 active:scale-[0.99]">
-      <div className="flex items-start justify-between gap-3">
-        <span data-accent={product.accent} className="tile grid h-12 w-12 place-items-center rounded-2xl text-[20px] font-bold">{product.icon}</span>
+    <button onClick={onClick} className="flex w-full flex-col overflow-hidden rounded-[18px] border border-line bg-surface text-left transition active:scale-[0.98]">
+      <div className="relative">
+        <ProductArt product={product} className="aspect-square w-full" />
         {!product.in_stock
-          ? <span className="rounded-full bg-down/10 px-2.5 py-1 text-[11px] font-semibold text-down">Sold out</span>
-          : product.tag && <span className="rounded-full bg-fill px-2.5 py-1 text-[11px] font-semibold text-muted">{product.tag}</span>}
+          ? <span className="absolute inset-0 grid place-items-center bg-bg/70 text-[13px] font-semibold">Sold out</span>
+          : product.tag && <span className="absolute left-2.5 top-2.5 rounded-full bg-surface/95 px-2 py-0.5 text-[11px] font-semibold shadow-sm">{product.tag}</span>}
       </div>
-      <p className="mt-5 text-[13px] font-medium text-muted">{product.category}</p>
-      <h3 className="mt-0.5 text-[18px] font-semibold tracking-tight">{product.name}</h3>
-      <p className="mt-1.5 line-clamp-2 text-[13px] leading-relaxed text-muted">{product.description}</p>
-      {product.features?.length > 0 && (
-        <ul className="mt-4 space-y-2">
-          {product.features.map((f) => (
-            <li key={f} className="flex items-center gap-2 text-[13px]"><Check size={15} strokeWidth={2.4} className="shrink-0 text-brand" />{f}</li>
-          ))}
-        </ul>
-      )}
-      <div className="mt-5 flex items-end justify-between gap-3 border-t border-line pt-4">
-        <p>
-          <b className="num text-[24px] font-semibold">${product.price.toFixed(2)}</b>
-          <span className="text-[13px] text-muted">{per}</span>
-        </p>
-        <span className="btn btn-secondary btn-sm transition group-hover:bg-ink group-hover:text-bg">
-          {!product.in_stock ? "Sold out" : product.period === "one-time" ? "Buy" : "Subscribe"}
-        </span>
+      <div className="flex flex-1 flex-col p-3">
+        <p className="line-clamp-2 min-h-[2.6em] text-[14px] font-semibold leading-snug">{product.name}</p>
+        <p className="mt-0.5 truncate text-[12px] text-muted">{product.category}</p>
+        <div className="mt-2 flex items-center justify-between gap-2">
+          <p className="min-w-0 truncate">
+            <b className="num text-[16px] font-bold">${whole}.{cents}</b>
+            <span className="text-[11px] text-muted">{per}</span>
+          </p>
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-brand text-white dark:text-[#0a0b0d]">
+            <Plus size={17} strokeWidth={2.4} />
+          </span>
+        </div>
       </div>
     </button>
   );

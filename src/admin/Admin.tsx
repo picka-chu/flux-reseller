@@ -575,19 +575,22 @@ function CatalogRow({ item, defaults, cols, reload }: { item: AdminCatalogItem; 
   const initialPeriod = item.period;
   const [margin, setMargin] = useState(initialMargin);
   const [category, setCategory] = useState(initialCategory);
+  const initialImage = item.image_url ?? "";
+  const [image, setImage] = useState(initialImage);
   const [period, setPeriod] = useState(initialPeriod);
   const [saving, setSaving] = useState(false);
 
   const m = margin.trim() === "" ? defaults.margin_percent : Number(margin);
   const sell = Math.ceil(item.cost_cents * (1 + m / 100) + defaults.markup_cents - 1e-9);
   const profit = sell - item.cost_cents;
-  const dirty = margin !== initialMargin || category !== initialCategory || period !== initialPeriod;
+  const dirty = margin !== initialMargin || category !== initialCategory || period !== initialPeriod || image !== initialImage;
 
   const save = async () => {
     const body: Record<string, unknown> = {};
     if (margin !== initialMargin) body.margin_percent = margin.trim() === "" ? null : Number(margin);
     if (category !== initialCategory && category.trim()) body.category = category.trim();
     if (period !== initialPeriod) body.period = period;
+    if (image !== initialImage) body.image_url = image.trim() || null;
     setSaving(true);
     try { await post(`/api/admin/catalog/${item.id}`, body); toast("Plan saved"); await reload(); }
     catch (e) { toast(e instanceof Error ? e.message : "Request failed", "error"); }
@@ -604,6 +607,7 @@ function CatalogRow({ item, defaults, cols, reload }: { item: AdminCatalogItem; 
       <div className="min-w-0">
         <b className="block truncate text-[14px] font-semibold">{item.display_name || item.name}</b>
         <input className="input mt-1" style={{ ...field, fontSize: 12 }} value={category} onChange={(e) => setCategory(e.target.value)} aria-label="Category" />
+        <input className="input mt-1" style={{ ...field, fontSize: 12 }} value={image} onChange={(e) => setImage(e.target.value)} placeholder="Image URL (https://…) optional" aria-label="Image URL" />
         <span className="mt-1 block text-[12px] text-muted">{item.in_stock ? `${item.stock} in stock` : "Out of stock"} · {item.sid}</span>
       </div>
       <span className="num text-[14px]">{money(item.supplier_price)}</span>

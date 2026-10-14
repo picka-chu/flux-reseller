@@ -3,6 +3,7 @@ export type Period = "month" | "year" | "one-time";
 export interface Product {
   id: string; name: string; category: string; description: string;
   price: number; period: Period; icon: string; accent: string; tag?: string; features: string[]; in_stock: boolean;
+  image_url?: string | null; sticker: string;
 }
 export interface Ad {
   id: string; title: string; body?: string | null; cta?: string | null;
@@ -55,6 +56,7 @@ export interface AdminCatalogItem {
   tag?: string | null; enabled: boolean; in_stock: boolean; stock: number; supplier_price: number;
   cost_cents: number; margin_percent: number | null; markup_cents: number | null;
   sell_cents: number; profit_cents: number; synced_at: string | null;
+  image_url: string | null; supplier_image: string | null; sticker: string;
 }
 export interface AdminCatalog { defaults: CatalogDefaults; items: AdminCatalogItem[] }
 export interface AdminSettings {

@@ -39,7 +39,6 @@ export function Header({ onHome, onProfile, name }: { onHome: () => void; onProf
     <header className="sticky top-0 z-20 -mx-5 flex h-[calc(56px+env(safe-area-inset-top))] items-center justify-between bg-bg/90 px-5 pt-[env(safe-area-inset-top)] backdrop-blur-xl">
       <button onClick={onHome} className="flex items-center gap-2.5" aria-label={`${BRAND} home`}>
         <BrandMark />
-        <span className="text-[16px] font-semibold tracking-tight">{BRAND}</span>
       </button>
       <button onClick={onProfile} aria-label="Profile"><Avatar name={name} /></button>
     </header>

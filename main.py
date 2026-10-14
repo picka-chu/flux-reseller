@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import httpx
 import asyncio
+import re
 from decimal import Decimal, ROUND_CEILING
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -103,6 +104,8 @@ def migrate_and_seed():
         ensure_column(c, "orders", "cost_cents", "INTEGER")
         ensure_column(c, "orders", "supplier_product_id", "INTEGER")
         ensure_column(c, "orders", "supplier_order_code", "TEXT")
+        ensure_column(c, "catalog", "image_url", "TEXT")
+        ensure_column(c, "catalog", "supplier_image", "TEXT")
         for k, v in DEFAULT_SETTINGS.items():
             c.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO NOTHING", (k, v))
 
@@ -140,6 +143,7 @@ class CatalogUpdate(BaseModel):
     period: str | None = None
     tag: str | None = Field(default=None, max_length=20)
     display_name: str | None = Field(default=None, max_length=80)
+    image_url: str | None = Field(default=None, max_length=500)
 
 class SettingsUpdate(BaseModel):
     default_margin_percent: float | None = Field(default=None, ge=0, le=500)
@@ -723,6 +727,19 @@ def product_name_of(pid):
         row = c.execute("SELECT name, display_name FROM catalog WHERE id=?", (sid,)).fetchone()
     return (row["display_name"] or row["name"]) if row else pid
 
+# Sticker artwork used when a plan has no product image.
+STICKERS = [("spotify", "🎵"), ("music", "🎵"), ("gemini", "✨"), ("chatgpt", "🤖"), ("gpt", "🤖"), ("openai", "🤖"),
+            ("ai", "🤖"), ("netflix", "🎬"), ("youtube", "🎬"), ("video", "🎬"), ("adobe", "🎨"), ("design", "🎨"),
+            ("canva", "🖌️"), ("game", "🎮"), ("gaming", "🎮"), ("points", "🎮"), ("cloud", "☁️"), ("storage", "☁️"),
+            ("drive", "☁️"), ("vpn", "🛡️"), ("office", "📄"), ("microsoft", "📄")]
+
+def sticker_for(name, category):
+    text = f"{name} {category}".lower()
+    for word, emoji in STICKERS:
+        if re.search(rf"\b{re.escape(word)}\b", text):
+            return emoji
+    return "⭐"
+
 def catalog_public_item(r, defaults):
     cost = cost_cents_of(r["supplier_price"])
     return {
@@ -731,6 +748,8 @@ def catalog_public_item(r, defaults):
         "price": sell_cents(cost, r["margin_percent"], r["markup_cents"], defaults) / 100,
         "period": r["period"], "icon": (r["name"] or "?")[:1].upper(), "accent": ACCENTS[r["id"] % len(ACCENTS)],
         "tag": r["tag"], "features": [], "in_stock": bool(r["in_stock"]) and (r["stock"] or 0) > 0,
+        "image_url": r["image_url"] or r["supplier_image"] or None,
+        "sticker": sticker_for(r["name"], r["category"]),
     }
 
 # ── Supplier client ────────────────────────────────────────────────────────
@@ -791,6 +810,8 @@ async def sync_catalog():
                 (pid, str(it.get("name") or it.get("title") or f"Product {pid}"), str(it.get("description") or ""),
                  str(it.get("price") or "0"), str(it.get("currency") or "USD"), int(it.get("stock") or 0),
                  1 if it.get("inStock") else 0, now))
+            img = next((str(it[k]) for k in ("image", "imageUrl", "thumbnail") if str(it.get(k) or "").startswith("https://")), None)
+            c.execute("UPDATE catalog SET supplier_image=? WHERE id=?", (img, pid))
         gone = [i for i in existing if i not in seen]
         for g in gone:
             c.execute("UPDATE catalog SET removed=1, in_stock=0 WHERE id=?", (g,))
@@ -853,7 +874,8 @@ def admin_catalog(u=Depends(admin)):
                       "enabled": bool(r["enabled"]), "in_stock": bool(r["in_stock"]), "stock": r["stock"],
                       "supplier_price": float(r["supplier_price"]), "cost_cents": cost,
                       "margin_percent": r["margin_percent"], "markup_cents": r["markup_cents"],
-                      "sell_cents": sell, "profit_cents": sell - cost, "synced_at": r["synced_at"]})
+                      "sell_cents": sell, "profit_cents": sell - cost, "synced_at": r["synced_at"],
+                      "image_url": r["image_url"], "supplier_image": r["supplier_image"], "sticker": sticker_for(r["name"], r["category"])})
     return {"defaults": {"margin_percent": defaults[0], "markup_cents": defaults[1]}, "items": items}
 
 @app.post("/api/admin/catalog/{pid}")
@@ -869,6 +891,7 @@ def admin_update_catalog(pid: int, b: CatalogUpdate, u=Depends(admin)):
         fields["period"] = b.period
     if "tag" in sent: fields["tag"] = (b.tag or "").strip() or None
     if "display_name" in sent: fields["display_name"] = (b.display_name or "").strip() or None
+    if "image_url" in sent: fields["image_url"] = clean_https(b.image_url, "Image")   # null clears it
     if not fields: raise HTTPException(400, "Nothing to update")
     assignments = ", ".join(f"{k}=?" for k in fields)   # keys are fixed names above, never user input
     with db() as c:

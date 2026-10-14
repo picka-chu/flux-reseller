@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Check } from "lucide-react";
 import { Button, Notice, useToast } from "../components/ui";
+import { ProductArt } from "../components/Blocks";
 import { post } from "../lib/api";
 import { money, periodSuffix } from "../lib/format";
 import type { Me, Product } from "../lib/types";
@@ -22,7 +23,7 @@ export function ProductSheet({ product, me, onPurchased, onTopup }: { product: P
   return (
     <>
       <div className="flex flex-col items-center pb-5 pt-4 text-center">
-        <span data-accent={product.accent} className="tile grid h-16 w-16 place-items-center rounded-2xl text-[28px] font-bold">{product.icon}</span>
+        <ProductArt product={product} large className="h-44 w-44 rounded-[32px]" />
         <h2 className="mt-4 text-[24px] font-bold tracking-tight">{product.name}</h2>
         <p className="text-[14px] text-muted">{product.category}</p>
         <p className="num mt-4 text-[40px] font-bold leading-none">
