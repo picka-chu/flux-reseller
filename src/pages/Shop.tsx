@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { PackageSearch, Search } from "lucide-react";
 import { AdSlot, PlanCard } from "../components/Blocks";
-import { Empty, ListSkeleton, Skeleton } from "../components/ui";
+import { Empty, Skeleton } from "../components/ui";
 import type { Product } from "../lib/types";
 
 interface Props {
