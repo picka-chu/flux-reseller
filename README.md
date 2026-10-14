@@ -16,11 +16,17 @@ uvicorn main:app --reload
 
 Set `TELEGRAM_BOT_TOKEN` and `ADMIN_TELEGRAM_IDS` before using Telegram authentication. `FLUX_DEMO_MODE=true` is for local previews only and must never be enabled in production.
 
+## Supabase database
+1. Create a Supabase project.
+2. Open **Project Settings → Database** and copy a PostgreSQL connection string. For hosted environments, use the Session Pooler if direct connectivity is unavailable.
+3. Add it to Render as the secret environment variable `SUPABASE_DB_URL`. Do not commit credentials to GitHub.
+4. On startup, the app creates the required starter tables automatically.
+
 ## Render
 Create a new Web Service from this repository. Build command: `pip install -r requirements.txt`. Start command: `uvicorn main:app --host 0.0.0.0 --port $PORT`.
 
 ## Before accepting real funds
-- Replace the temporary SQLite database with persistent PostgreSQL.
+- Set `SUPABASE_DB_URL` to your Supabase PostgreSQL connection string. The app prefers Supabase PostgreSQL when this variable is present and falls back to local SQLite only for local development.
 - Configure and verify recipient details for each supported payment method.
 - Implement supplier catalog sync and secure fulfillment.
 - Add admin review tooling, audit logs, rate limiting, monitoring, and backups.
