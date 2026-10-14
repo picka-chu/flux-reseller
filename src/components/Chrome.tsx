@@ -1,6 +1,5 @@
 import { Home, Package, Store, UserRound, Wallet, type LucideIcon } from "lucide-react";
 import { haptic, tg } from "../lib/telegram";
-import { BRAND } from "../lib/brand";
 
 export type Tab = "home" | "shop" | "wallet" | "orders" | "profile";
 const TABS: { id: Tab; label: string; icon: LucideIcon }[] = [
@@ -10,19 +9,6 @@ const TABS: { id: Tab; label: string; icon: LucideIcon }[] = [
   { id: "orders", label: "Orders", icon: Package },
   { id: "profile", label: "Profile", icon: UserRound }
 ];
-
-/** Neutral monogram from the store name. No external logo artwork. */
-export function BrandMark({ size = 32 }: { size?: number }) {
-  return (
-    <span
-      aria-hidden="true"
-      className="grid shrink-0 place-items-center rounded-[10px] bg-ink font-bold text-bg"
-      style={{ width: size, height: size, fontSize: size * 0.44 }}
-    >
-      {BRAND.charAt(0)}
-    </span>
-  );
-}
 
 export function Avatar({ name, size = 36 }: { name?: string; size?: number }) {
   const photo = tg?.initDataUnsafe?.user?.photo_url;
@@ -34,12 +20,9 @@ export function Avatar({ name, size = 36 }: { name?: string; size?: number }) {
   );
 }
 
-export function Header({ onHome, onProfile, name }: { onHome: () => void; onProfile: () => void; name?: string }) {
+export function Header({ onProfile, name }: { onProfile: () => void; name?: string }) {
   return (
-    <header className="sticky top-0 z-20 -mx-5 flex h-[calc(56px+env(safe-area-inset-top))] items-center justify-between bg-bg/90 px-5 pt-[env(safe-area-inset-top)] backdrop-blur-xl">
-      <button onClick={onHome} className="flex items-center gap-2.5" aria-label={`${BRAND} home`}>
-        <BrandMark />
-      </button>
+    <header className="sticky top-0 z-20 -mx-5 flex h-[calc(56px+env(safe-area-inset-top))] items-center justify-end bg-bg/90 px-5 pt-[env(safe-area-inset-top)] backdrop-blur-xl">
       <button onClick={onProfile} aria-label="Profile"><Avatar name={name} /></button>
     </header>
   );

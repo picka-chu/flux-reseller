@@ -56,7 +56,7 @@ export interface AdminCatalogItem {
   tag?: string | null; enabled: boolean; in_stock: boolean; stock: number; supplier_price: number;
   cost_cents: number; margin_percent: number | null; markup_cents: number | null;
   sell_cents: number; profit_cents: number; synced_at: string | null;
-  image_url: string | null; supplier_image: string | null; sticker: string;
+  image_url: string | null; supplier_image: string | null; sticker: string; featured: boolean;
 }
 export interface AdminCatalog { defaults: CatalogDefaults; items: AdminCatalogItem[] }
 export interface AdminSettings {
@@ -67,3 +67,5 @@ export interface AdminSettings {
 
 export interface SupportMessage { id: string; sender: "customer" | "admin"; body: string; created_at: string }
 export interface SupportState { thread: { id: string; status: string } | null; messages: SupportMessage[] }
+
+export interface FeedSection { key: string; title: string; subtitle: string; items: Product[] }

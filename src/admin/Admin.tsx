@@ -3,8 +3,6 @@ import {
   AlertTriangle, Boxes, Check, ChevronRight, Coins, LayoutDashboard, Megaphone, Moon, MoreHorizontal, Package, Receipt, RefreshCw,
   Search, Settings, ShieldCheck, Sun, TrendingUp, UserPlus, Users, Wallet, X, type LucideIcon
 } from "lucide-react";
-import { BrandMark } from "../components/Chrome";
-import { BRAND } from "../lib/brand";
 import { Button, Empty, Segmented, Sheet, StatusPill, ToastProvider, useToast } from "../components/ui";
 import { useTheme } from "../hooks/useTheme";
 import { post, request } from "../lib/api";
@@ -95,13 +93,14 @@ function Console() {
   const fUsers = useMemo(() => users.filter((u) => match(u.telegram_id, u.username, u.first_name)), [users, q]); // eslint-disable-line react-hooks/exhaustive-deps
   const count = page === "topups" ? topups.length : page === "orders" ? orders.length : users.length;
   const [title, subtitle] = TITLES[page];
+  useEffect(() => { document.title = "Admin"; }, []);
   const navigate = (p: Page) => { setPage(p); setSearch(""); setMoreOpen(false); };
   const MORE_PAGES: Page[] = ["ads", "catalog", "settings"];
 
   return (
     <div className="mx-auto min-h-dvh max-w-7xl px-4 pb-12 sm:px-7">
       <header className="sticky top-0 z-20 -mx-4 flex h-14 items-center justify-between border-b border-line bg-bg/90 px-4 backdrop-blur-xl sm:-mx-7 sm:h-16 sm:px-7">
-        <a href="/" className="flex items-center gap-2.5"><BrandMark size={32} /><span className="text-[16px] font-semibold tracking-tight">{BRAND}</span><span className="hidden rounded-full bg-fill px-2.5 py-0.5 text-[12px] font-semibold text-muted sm:inline-flex">Operations</span></a>
+        <span className="min-w-0 truncate text-[16px] font-semibold tracking-tight">{title}</span>
         <div className="flex items-center gap-2">
           {page === "orders" && <Button variant="secondary" size="sm" aria-label="Check supplier" onClick={syncOrders}><RefreshCw size={16} /><span className="hidden sm:inline">Check supplier</span></Button>}
           <Button variant="secondary" size="sm" aria-label="Toggle theme" onClick={() => theme.setMode(theme.resolved === "dark" ? "light" : "dark")}>{theme.resolved === "dark" ? <Sun size={16} /> : <Moon size={16} />}</Button>
@@ -596,6 +595,10 @@ function CatalogRow({ item, defaults, cols, reload }: { item: AdminCatalogItem; 
     catch (e) { toast(e instanceof Error ? e.message : "Request failed", "error"); }
     finally { setSaving(false); }
   };
+  const toggleOffer = async () => {
+    try { await post(`/api/admin/catalog/${item.id}`, { featured: !item.featured }); toast(item.featured ? "Removed from best offers" : "Added to best offers"); await reload(); }
+    catch (e) { toast(e instanceof Error ? e.message : "Request failed", "error"); }
+  };
   const toggle = async () => {
     try { await post(`/api/admin/catalog/${item.id}`, { enabled: !item.enabled }); toast(item.enabled ? "Plan hidden from customers" : "Plan is live"); await reload(); }
     catch (e) { toast(e instanceof Error ? e.message : "Request failed", "error"); }
@@ -624,6 +627,7 @@ function CatalogRow({ item, defaults, cols, reload }: { item: AdminCatalogItem; 
       <b className={`num text-[15px] ${profit > 0 ? "text-up" : ""}`}>{money(profit / 100)}</b>
       <div className="flex flex-wrap gap-2">
         {dirty && <Button size="sm" loading={saving} onClick={save}>Save</Button>}
+        <Button size="sm" variant={item.featured ? "primary" : "secondary"} onClick={toggleOffer}>{item.featured ? "Best offer ✓" : "Best offer"}</Button>
         <Button size="sm" variant={item.enabled ? "secondary" : "primary"} onClick={toggle}>{item.enabled ? "Hide" : "Show"}</Button>
       </div>
     </Row>

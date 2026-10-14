@@ -108,6 +108,9 @@ def migrate_and_seed():
         ensure_column(c, "orders", "supplier_order_code", "TEXT")
         ensure_column(c, "catalog", "image_url", "TEXT")
         ensure_column(c, "catalog", "supplier_image", "TEXT")
+        ensure_column(c, "catalog", "added_at", "TEXT")
+        ensure_column(c, "catalog", "restocked_at", "TEXT")
+        ensure_column(c, "catalog", "featured", "INTEGER NOT NULL DEFAULT 0")
         for k, v in DEFAULT_SETTINGS.items():
             c.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO NOTHING", (k, v))
 
@@ -146,6 +149,7 @@ class CatalogUpdate(BaseModel):
     tag: str | None = Field(default=None, max_length=20)
     display_name: str | None = Field(default=None, max_length=80)
     image_url: str | None = Field(default=None, max_length=500)
+    featured: bool | None = None
 
 class SettingsUpdate(BaseModel):
     default_margin_percent: float | None = Field(default=None, ge=0, le=500)
@@ -823,6 +827,7 @@ async def sync_catalog():
     seen, added = set(), 0
     with db() as c:
         existing = {r["id"] for r in c.execute("SELECT id FROM catalog").fetchall()}
+        prev_stock = {r["id"]: r["in_stock"] for r in c.execute("SELECT id, in_stock FROM catalog").fetchall()}
         for it in items:
             pid = int(it.get("productId") or it.get("id"))
             seen.add(pid)
@@ -838,6 +843,10 @@ async def sync_catalog():
                  1 if it.get("inStock") else 0, now))
             img = next((str(it[k]) for k in ("image", "imageUrl", "thumbnail") if str(it.get(k) or "").startswith("https://")), None)
             c.execute("UPDATE catalog SET supplier_image=? WHERE id=?", (img, pid))
+            if pid not in existing:
+                c.execute("UPDATE catalog SET added_at=? WHERE id=?", (now, pid))
+            elif prev_stock.get(pid) == 0 and (1 if it.get("inStock") else 0) == 1:
+                c.execute("UPDATE catalog SET restocked_at=? WHERE id=?", (now, pid))
         gone = [i for i in existing if i not in seen]
         for g in gone:
             c.execute("UPDATE catalog SET removed=1, in_stock=0 WHERE id=?", (g,))
@@ -901,7 +910,8 @@ def admin_catalog(u=Depends(admin)):
                       "supplier_price": float(r["supplier_price"]), "cost_cents": cost,
                       "margin_percent": r["margin_percent"], "markup_cents": r["markup_cents"],
                       "sell_cents": sell, "profit_cents": sell - cost, "synced_at": r["synced_at"],
-                      "image_url": r["image_url"], "supplier_image": r["supplier_image"], "sticker": sticker_for(r["name"], r["category"])})
+                      "image_url": r["image_url"], "supplier_image": r["supplier_image"], "sticker": sticker_for(r["name"], r["category"]),
+                      "featured": bool(r["featured"])})
     return {"defaults": {"margin_percent": defaults[0], "markup_cents": defaults[1]}, "items": items}
 
 @app.post("/api/admin/catalog/{pid}")
@@ -918,6 +928,7 @@ def admin_update_catalog(pid: int, b: CatalogUpdate, u=Depends(admin)):
     if "tag" in sent: fields["tag"] = (b.tag or "").strip() or None
     if "display_name" in sent: fields["display_name"] = (b.display_name or "").strip() or None
     if "image_url" in sent: fields["image_url"] = clean_https(b.image_url, "Image")   # null clears it
+    if "featured" in sent and b.featured is not None: fields["featured"] = 1 if b.featured else 0
     if not fields: raise HTTPException(400, "Nothing to update")
     assignments = ", ".join(f"{k}=?" for k in fields)   # keys are fixed names above, never user input
     with db() as c:
@@ -1137,4 +1148,34 @@ async def support_post(b: SupportMessageIn, u=Depends(current_user)):
         raise HTTPException(429, "You're sending messages too quickly. Please wait a minute.")
     tid = await support_from_customer(tg_id, u.get("first_name"), u.get("username"), b.body.strip())
     return {"thread_id": tid, "status": "open"}
+
+# ── Home feed: curated sections instead of one long list ───────────────────
+@app.get("/api/feed")
+def feed():
+    now = datetime.now(timezone.utc)
+    week = (now - timedelta(days=7)).isoformat()
+    month = (now - timedelta(days=30)).isoformat()
+    defaults = pricing_defaults()
+    with db() as c:
+        offers = c.execute("SELECT * FROM catalog WHERE enabled=1 AND removed=0 AND in_stock=1 AND featured=1 ORDER BY name LIMIT 8").fetchall()
+        restocked = c.execute("SELECT * FROM catalog WHERE enabled=1 AND removed=0 AND in_stock=1 AND restocked_at>=? ORDER BY restocked_at DESC LIMIT 8", (week,)).fetchall()
+        new = c.execute("SELECT * FROM catalog WHERE enabled=1 AND removed=0 AND in_stock=1 AND added_at>=? ORDER BY added_at DESC LIMIT 8", (week,)).fetchall()
+        ranked = [r["sid"] for r in c.execute(
+            "SELECT supplier_product_id sid, COUNT(*) n FROM orders WHERE status!='refunded' AND supplier_product_id IS NOT NULL "
+            "AND created_at>=? GROUP BY supplier_product_id ORDER BY n DESC LIMIT 8", (month,)).fetchall()]
+        popular_rows = c.execute(
+            f"SELECT * FROM catalog WHERE enabled=1 AND removed=0 AND id IN ({','.join('?' * len(ranked))})",
+            tuple(ranked)).fetchall() if ranked else []
+    by_id = {r["id"]: r for r in popular_rows}
+    popular = [by_id[i] for i in ranked if i in by_id]
+
+    sections = [
+        ("offers", "Best offers", "Hand-picked deals from our team", offers),
+        ("restocked", "Just restocked", "Back in stock this week", restocked),
+        ("new", "New arrivals", "Added in the last 7 days", new),
+        ("popular", "Popular this month", "What other customers are buying", popular),
+    ]
+    return [{"key": key, "title": title, "subtitle": sub,
+             "items": [catalog_public_item(r, defaults) for r in rows]}
+            for key, title, sub, rows in sections if rows]
 

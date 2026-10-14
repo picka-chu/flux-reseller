@@ -6,7 +6,7 @@ import { useResource } from "./hooks/useResource";
 import { useTheme } from "./hooks/useTheme";
 import { request } from "./lib/api";
 
-import type { Me, Order, Product, Topup } from "./lib/types";
+import type { FeedSection, Me, Order, Product, Topup } from "./lib/types";
 import { Home } from "./pages/Home";
 import { Orders } from "./pages/Orders";
 import { Shop } from "./pages/Shop";
@@ -34,6 +34,7 @@ export default function App() {
 
   const me = useResource(() => request<Me>("/api/me"));
   const products = useResource(() => request<Product[]>("/api/products"));
+  const feed = useResource(() => request<FeedSection[]>("/api/feed"));
   const orders = useResource(() => request<Order[]>("/api/orders"), false);
   const topups = useResource(() => request<Topup[]>("/api/topups"), false);
 
@@ -54,14 +55,14 @@ export default function App() {
   return (
     <ToastProvider>
       <div className="app-shell mx-auto max-w-2xl px-5 pb-[calc(112px+env(safe-area-inset-bottom))]">
-        <Header name={me.data?.first_name} onHome={() => go("home")} onProfile={() => go("profile")} />
+        <Header name={me.data?.first_name} onProfile={() => go("profile")} />
         <main key={tab}>
           {tab === "home" && (
             <Home
               me={me.data} meLoading={me.loading}
-              products={products.data} productsLoading={products.loading} productsError={products.error}
+              feed={feed.data} feedLoading={feed.loading} feedError={feed.error}
               onBuy={(product) => setSheet({ type: "product", product })}
-              onTopup={openTopup} onShop={() => go("shop")} onHelp={openHelp} onRetry={products.reload}
+              onTopup={openTopup} onShop={() => go("shop")} onHelp={openHelp} onRetry={feed.reload}
             />
           )}
           {tab === "shop" && (
