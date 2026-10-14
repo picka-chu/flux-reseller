@@ -1,6 +1,15 @@
+export type Period = "month" | "year" | "one-time";
+
 export interface Product {
   id: string; name: string; category: string; description: string;
-  price: number; icon: string; accent: string; tag?: string;
+  price: number; period: Period; icon: string; accent: string; tag?: string; features: string[];
+}
+export interface Ad {
+  id: string; title: string; body?: string | null; cta?: string | null;
+  link_url?: string | null; image_url?: string | null; placement: string; ends_at?: string | null;
+}
+export interface AdminAd extends Ad {
+  active: boolean; created_at: string;
 }
 export interface Me {
   id: number; first_name?: string; username?: string; balance: number; orders_count: number;

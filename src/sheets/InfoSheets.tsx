@@ -2,8 +2,8 @@ import { Check, ShieldCheck, MessageCircle } from "lucide-react";
 import { Button } from "../components/ui";
 
 const COPY = {
-  help: { icon: MessageCircle, title: "How can we help?", body: "For help with a deposit or an order, message the official FLUX bot and include your request ID. Never share passwords, login codes or wallet recovery phrases." },
-  safety: { icon: ShieldCheck, title: "How payments work", body: "FLUX reviews deposits manually. Creating a request or entering a transfer reference does not credit your wallet; an administrator must verify the funds arrived. Listings are samples until supplier fulfilment is configured." }
+  help: { icon: MessageCircle, title: "How can we help?", body: "For help with a deposit or an order, message the official store bot and include your request ID. Never share passwords, login codes or wallet recovery phrases." },
+  safety: { icon: ShieldCheck, title: "How payments work", body: "Deposits are reviewed manually. Creating a request or entering a transfer reference does not credit your wallet; an administrator must verify the funds arrived. Listings are samples until supplier fulfilment is configured." }
 } as const;
 
 export function InfoSheet({ kind, onClose }: { kind: keyof typeof COPY; onClose: () => void }) {

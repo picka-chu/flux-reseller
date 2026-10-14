@@ -3,6 +3,7 @@ import { Avatar } from "../components/Chrome";
 import { MenuRow } from "../components/Blocks";
 import { Segmented } from "../components/ui";
 import { money } from "../lib/format";
+import { BRAND } from "../lib/brand";
 import { inTelegram, tg } from "../lib/telegram";
 import type { ThemeMode } from "../hooks/useTheme";
 import type { Me } from "../lib/types";
@@ -10,7 +11,7 @@ import type { Me } from "../lib/types";
 interface Props { me: Me | null; mode: ThemeMode; onMode: (m: ThemeMode) => void; go: (t: "wallet" | "orders") => void; onHelp: () => void; onSafety: () => void }
 
 export function Profile({ me, mode, onMode, go, onHelp, onSafety }: Props) {
-  const name = me?.first_name || tg?.initDataUnsafe?.user?.first_name || "Welcome to FLUX";
+  const name = me?.first_name || tg?.initDataUnsafe?.user?.first_name || "Welcome";
   const handle = me?.username || tg?.initDataUnsafe?.user?.username;
   return (
     <div className="animate-rise">
@@ -38,7 +39,7 @@ export function Profile({ me, mode, onMode, go, onHelp, onSafety }: Props) {
         <MenuRow icon={MessageCircle} label="Help & support" hint="Questions about orders or payments" onClick={onHelp} />
         <MenuRow icon={ShieldCheck} label="Safety & payments" hint="How deposits are reviewed" onClick={onSafety} />
       </div>
-      <p className="py-8 text-center text-[12px] text-muted">FLUX · Digital, simplified</p>
+      <p className="py-8 text-center text-[12px] text-muted">{BRAND} · Subscriptions, simplified</p>
     </div>
   );
 }

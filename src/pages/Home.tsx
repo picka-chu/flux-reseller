@@ -1,60 +1,41 @@
-import { useMemo, useState } from "react";
-import { CircleHelp, Package, Plus, Search, ShieldCheck, ArrowUpRight, PackageSearch } from "lucide-react";
-import { BalanceHero, ProductRow, QuickAction } from "../components/Blocks";
-import { Empty, ListSkeleton, Notice, SectionHeader } from "../components/ui";
+import { ArrowUpRight, PackageSearch, ShieldCheck } from "lucide-react";
+import { AdSlot, PlanCard, WalletStrip } from "../components/Blocks";
+import { Empty, Notice, SectionHeader, Skeleton } from "../components/ui";
 import { inTelegram } from "../lib/telegram";
+import { BRAND } from "../lib/brand";
 import type { Me, Product } from "../lib/types";
 
 interface Props {
   me: Me | null; meLoading: boolean;
   products: Product[] | null; productsLoading: boolean; productsError: string | null;
-  onBuy: (p: Product) => void; onTopup: () => void; onOrders: () => void; onHelp: () => void; onRetry: () => void;
+  onBuy: (p: Product) => void; onTopup: () => void; onShop: () => void; onHelp: () => void; onRetry: () => void;
 }
 
-export function Home({ me, meLoading, products, productsLoading, productsError, onBuy, onTopup, onOrders, onHelp, onRetry }: Props) {
-  const [query, setQuery] = useState("");
-  const [category, setCategory] = useState("All");
-
-  const categories = useMemo(() => ["All", "Popular", ...Array.from(new Set((products ?? []).map((p) => p.category)))], [products]);
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return (products ?? []).filter((p) => {
-      const inCat = category === "All" || (category === "Popular" ? ["Popular", "Trending"].includes(p.tag ?? "") : p.category === category);
-      return inCat && (!q || `${p.name} ${p.category} ${p.description}`.toLowerCase().includes(q));
-    });
-  }, [products, category, query]);
-
+export function Home({ me, meLoading, products, productsLoading, productsError, onBuy, onTopup, onShop, onHelp, onRetry }: Props) {
   return (
     <div className="animate-rise">
-      <section className="pb-6 pt-3">
-        <BalanceHero balance={me?.balance} loading={meLoading} hint={me ? "Available in your FLUX wallet" : undefined} />
-        <div className="mt-7 flex gap-2">
-          <QuickAction icon={Plus} label="Add funds" onClick={onTopup} primary />
-          <QuickAction icon={Package} label="Orders" onClick={onOrders} />
-          <QuickAction icon={CircleHelp} label="Support" onClick={onHelp} />
-        </div>
-        {!meLoading && !me && !inTelegram && <Notice>Open FLUX inside Telegram to see your wallet and place orders.</Notice>}
+      <section className="pb-7 pt-5">
+        <p className="text-[14px] text-muted">{me?.first_name ? "Welcome back" : `Welcome to ${BRAND}`}</p>
+        <h1 className="mt-1 text-[30px] font-bold leading-tight tracking-tight">{me?.first_name ?? "Subscriptions, simplified"}</h1>
+        <p className="mt-2 text-[15px] leading-relaxed text-muted">Browse premium plans and pay from one wallet.</p>
+        <div className="mt-6"><WalletStrip balance={me?.balance} loading={meLoading} onAdd={onTopup} /></div>
+        {!meLoading && !me && !inTelegram && <Notice>Open the app inside Telegram to see your wallet and subscribe.</Notice>}
       </section>
 
-      <SectionHeader title="Marketplace" />
-      <label className="mb-3 flex h-12 items-center gap-2.5 rounded-full bg-fill px-4 text-muted focus-within:ring-2 focus-within:ring-brand">
-        <Search size={18} />
-        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search products" className="min-w-0 flex-1 bg-transparent text-[15px] text-ink outline-none placeholder:text-muted" />
-      </label>
-      <div className="scroll-x -mx-5 mb-3 flex gap-2 overflow-x-auto px-5">
-        {categories.map((c) => (
-          <button key={c} onClick={() => setCategory(c)} className={`shrink-0 rounded-full px-4 py-2 text-[13px] font-semibold transition ${category === c ? "bg-ink text-bg" : "bg-fill text-ink"}`}>{c}</button>
-        ))}
-      </div>
+      <AdSlot placement="home" />
 
-      <div className="card overflow-hidden">
-        {productsLoading && !products ? <ListSkeleton rows={5} />
-          : productsError && !products ? <Empty icon={PackageSearch} title="Couldn't load products" text={productsError} action={<button onClick={onRetry} className="btn btn-secondary btn-sm">Try again</button>} />
-          : filtered.length ? <div className="divide-y divide-line">{filtered.map((p) => <ProductRow key={p.id} product={p} onClick={() => onBuy(p)} />)}</div>
-          : <Empty icon={Search} title="No products found" text="Try another search or category." />}
-      </div>
+      <SectionHeader title="All subscriptions" action={<button onClick={onShop} className="text-[14px] font-semibold text-brand">See all</button>} />
+      {productsLoading && !products ? (
+        <div className="grid gap-3 sm:grid-cols-2">{Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-72 !rounded-[20px]" />)}</div>
+      ) : productsError && !products ? (
+        <div className="card"><Empty icon={PackageSearch} title="Couldn't load plans" text={productsError} action={<button onClick={onRetry} className="btn btn-secondary btn-sm">Try again</button>} /></div>
+      ) : products?.length ? (
+        <div className="grid gap-3 sm:grid-cols-2">{products.map((p) => <PlanCard key={p.id} product={p} onClick={() => onBuy(p)} />)}</div>
+      ) : (
+        <div className="card"><Empty icon={PackageSearch} title="No plans yet" text="New subscriptions will appear here." /></div>
+      )}
 
-      <button onClick={onHelp} className="card mt-5 flex w-full items-center gap-3.5 p-4 text-left transition active:bg-fill">
+      <button onClick={onHelp} className="card mt-6 flex w-full items-center gap-3.5 p-4 text-left transition active:bg-fill">
         <span className="grid h-10 w-10 place-items-center rounded-full bg-brand-soft text-brand"><ShieldCheck size={20} /></span>
         <span className="flex-1"><b className="block text-[15px]">Need a hand?</b><span className="text-[13px] text-muted">Help with orders and payments</span></span>
         <ArrowUpRight size={18} className="text-muted" />

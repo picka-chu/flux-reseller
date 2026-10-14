@@ -46,7 +46,7 @@ export function PaymentSheet({ data, onSubmitted }: { data: TopupCreated; onSubm
         <div className="min-w-0"><p className="text-[12px] text-muted">Payment reference</p><b className="block truncate text-[16px]">{data.reference}</b></div>
         <Button variant="secondary" size="sm" onClick={copy}>{copied ? <Check size={15} /> : <Copy size={15} />}{copied ? "Copied" : "Copy"}</Button>
       </div>
-      <Notice tone="warn">Recipient details are not configured yet. Don’t send funds until FLUX publishes official instructions.</Notice>
+      <Notice tone="warn">Recipient details are not configured yet. Don’t send funds until the store publishes official instructions.</Notice>
       <label className="mb-2 block text-[13px] font-semibold text-muted" htmlFor="tx">Transaction ID / transfer reference</label>
       <input id="tx" className="input mb-4" value={tx} onChange={(e) => setTx(e.target.value)} maxLength={160} placeholder="Paste transfer reference" />
       <Button full size="lg" loading={busy} disabled={expired} onClick={submit}>Submit for review</Button>

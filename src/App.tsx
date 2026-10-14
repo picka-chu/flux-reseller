@@ -9,6 +9,7 @@ import { tg } from "./lib/telegram";
 import type { Me, Order, Product, Topup } from "./lib/types";
 import { Home } from "./pages/Home";
 import { Orders } from "./pages/Orders";
+import { Shop } from "./pages/Shop";
 import { Profile } from "./pages/Profile";
 import { Wallet } from "./pages/Wallet";
 import { InfoSheet, SuccessSheet } from "./sheets/InfoSheets";
@@ -62,7 +63,13 @@ export default function App() {
               me={me.data} meLoading={me.loading}
               products={products.data} productsLoading={products.loading} productsError={products.error}
               onBuy={(product) => setSheet({ type: "product", product })}
-              onTopup={openTopup} onOrders={() => go("orders")} onHelp={openHelp} onRetry={products.reload}
+              onTopup={openTopup} onShop={() => go("shop")} onHelp={openHelp} onRetry={products.reload}
+            />
+          )}
+          {tab === "shop" && (
+            <Shop
+              products={products.data} productsLoading={products.loading} productsError={products.error}
+              onBuy={(product) => setSheet({ type: "product", product })} onRetry={products.reload}
             />
           )}
           {tab === "wallet" && <Wallet me={me.data} meLoading={me.loading} topups={topups.data} loading={topups.loading} error={topups.error} onTopup={openTopup} onRefresh={topups.reload} />}

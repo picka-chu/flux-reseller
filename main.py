@@ -16,19 +16,20 @@ BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 ADMIN_IDS = {int(x) for x in os.getenv("ADMIN_TELEGRAM_IDS", "").split(",") if x.strip().isdigit()}
 TTL = int(os.getenv("PAYMENT_TTL_MINUTES", "20"))
 WEBAPP_URL = os.getenv("FLUX_WEBAPP_URL", os.getenv("RENDER_EXTERNAL_URL", "")).rstrip("/")
+BRAND_NAME = os.getenv("BRAND_NAME", "Storefront")
 WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", secrets.token_urlsafe(32))
-app = FastAPI(title="FLUX API", version="0.1.0")
+app = FastAPI(title="Store API", version="0.2.0")
 FRONTEND_DIST = os.path.join(ROOT, "frontend_dist")
 if os.path.isdir(os.path.join(FRONTEND_DIST, "assets")):
     app.mount("/assets", StaticFiles(directory=os.path.join(FRONTEND_DIST, "assets")), name="frontend-assets")
 
 PRODUCTS = [
- {"id":"spotify-premium","name":"Spotify Premium","category":"Music","description":"Sample listing; availability must be confirmed.","price":4.99,"icon":"♫","accent":"green","tag":"Popular"},
- {"id":"chatgpt-plus","name":"ChatGPT Plus","category":"AI tools","description":"Sample listing; availability must be confirmed.","price":19.99,"icon":"✳","accent":"mint","tag":"AI"},
- {"id":"netflix-premium","name":"Netflix Premium","category":"Entertainment","description":"Sample listing; regional availability may vary.","price":7.99,"icon":"N","accent":"red","tag":"Trending"},
- {"id":"adobe-creative","name":"Adobe Creative Cloud","category":"Design","description":"Sample listing; availability must be confirmed.","price":29.99,"icon":"✺","accent":"orange","tag":"Creative"},
- {"id":"gaming-points","name":"Gaming Points","category":"Gaming","description":"Sample listing; check region before ordering.","price":9.99,"icon":"◈","accent":"purple","tag":"Gaming"},
- {"id":"cloud-storage","name":"Cloud Storage","category":"Productivity","description":"Sample listing; availability must be confirmed.","price":5.99,"icon":"▤","accent":"blue","tag":"Utility"},
+ {"id":"spotify-premium","name":"Spotify Premium","category":"Music","description":"Sample listing; availability must be confirmed.","price":4.99,"period":"month","icon":"♫","accent":"green","tag":"Popular","features":["Ad-free listening","Offline downloads","Background play"]},
+ {"id":"chatgpt-plus","name":"ChatGPT Plus","category":"AI tools","description":"Sample listing; availability must be confirmed.","price":19.99,"period":"month","icon":"✳","accent":"mint","tag":"AI","features":["Priority access","Advanced models","Higher usage limits"]},
+ {"id":"netflix-premium","name":"Netflix Premium","category":"Entertainment","description":"Sample listing; regional availability may vary.","price":7.99,"period":"month","icon":"N","accent":"red","tag":"Trending","features":["HD streaming","Multiple screens","Downloads on supported devices"]},
+ {"id":"adobe-creative","name":"Adobe Creative Cloud","category":"Design","description":"Sample listing; availability must be confirmed.","price":29.99,"period":"month","icon":"✺","accent":"orange","tag":"Creative","features":["Full creative app suite","Cloud storage included","Regular updates"]},
+ {"id":"gaming-points","name":"Gaming Points","category":"Gaming","description":"Sample listing; check region before ordering.","price":9.99,"period":"one-time","icon":"◈","accent":"purple","tag":"Gaming","features":["Credit for supported titles","Instant delivery","Check region first"]},
+ {"id":"cloud-storage","name":"Cloud Storage","category":"Productivity","description":"Sample listing; availability must be confirmed.","price":5.99,"period":"month","icon":"▤","accent":"blue","tag":"Utility","features":["Encrypted backups","Sync across devices","Shareable links"]},
 ]
 
 class DatabaseAdapter:
@@ -76,6 +77,7 @@ def init_db():
         CREATE UNIQUE INDEX IF NOT EXISTS unique_pending_amount ON topups(method,expected_millis) WHERE status='pending';
         CREATE TABLE IF NOT EXISTS ledger(id TEXT PRIMARY KEY,telegram_id INTEGER NOT NULL,delta_cents INTEGER NOT NULL,reason TEXT NOT NULL,reference TEXT NOT NULL UNIQUE,created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS orders(id TEXT PRIMARY KEY,telegram_id INTEGER NOT NULL,product_id TEXT NOT NULL,price_cents INTEGER NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,delivery_note TEXT);
+        CREATE TABLE IF NOT EXISTS ads(id TEXT PRIMARY KEY,title TEXT NOT NULL,body TEXT,cta TEXT,link_url TEXT,image_url TEXT,placement TEXT NOT NULL,active INTEGER NOT NULL DEFAULT 1,ends_at TEXT,created_at TEXT NOT NULL);
         """)
         # Telegram IDs exceed PostgreSQL's signed 32-bit INTEGER range.
         # Convert existing production columns to BIGINT as an idempotent migration.
@@ -94,6 +96,16 @@ class AdminDecision(BaseModel):
     note: str | None = None
 class OrderCreate(BaseModel):
     product_id: str
+class AdCreate(BaseModel):
+    title: str = Field(min_length=2, max_length=80)
+    body: str | None = Field(default=None, max_length=240)
+    cta: str | None = Field(default=None, max_length=24)
+    link_url: str | None = Field(default=None, max_length=500)
+    image_url: str | None = Field(default=None, max_length=500)
+    placement: str
+    ends_at: str | None = None
+class AdStatus(BaseModel):
+    active: bool
 
 def validate_init(raw):
     if not BOT_TOKEN: raise HTTPException(503,"Telegram authentication is not configured")
@@ -112,7 +124,7 @@ def validate_init(raw):
 
 def current_user(authorization: str|None=Header(default=None)):
     if os.getenv("FLUX_DEMO_MODE","false").lower()=="true": return {"id":100000001,"username":"demo_user","first_name":"Demo"}
-    if not authorization or not authorization.startswith("tma "): raise HTTPException(401,"Open FLUX inside Telegram to continue")
+    if not authorization or not authorization.startswith("tma "): raise HTTPException(401,"Open the app inside Telegram to continue")
     return validate_init(authorization[4:])
 
 def ensure_user(u):
@@ -140,7 +152,7 @@ async def configure_telegram_webhook():
     if BOT_TOKEN and WEBAPP_URL.startswith("https://"):
         try:
             await telegram_api("setMyCommands", {"commands": [
-                {"command": "start", "description": "Open the FLUX store"},
+                {"command": "start", "description": "Open the store"},
                 {"command": "balance", "description": "Check your wallet balance"},
                 {"command": "orders", "description": "View your recent orders"},
                 {"command": "help", "description": "Get help and safety guidance"}
@@ -169,7 +181,7 @@ async def telegram_webhook(secret: str, update: dict, request: Request):
     first = user.get("first_name") or "there"
     if telegram_id:
         ensure_user({"id": int(telegram_id), "username": user.get("username", ""), "first_name": first})
-    keyboard = {"inline_keyboard": [[{"text": "Open FLUX", "web_app": {"url": WEBAPP_URL}}]]} if WEBAPP_URL.startswith("https://") else None
+    keyboard = {"inline_keyboard": [[{"text": "Open store", "web_app": {"url": WEBAPP_URL}}]]} if WEBAPP_URL.startswith("https://") else None
 
     async def reply(message_text, markup=None):
         payload = {"chat_id": chat["id"], "text": message_text}
@@ -178,23 +190,23 @@ async def telegram_webhook(secret: str, update: dict, request: Request):
         await telegram_api("sendMessage", payload)
 
     if command == "/start":
-        welcome = f"Welcome to FLUX, {first}!\n\nYour digital essentials in one place. Browse products, manage wallet requests, and track orders."
+        welcome = f"Welcome to {BRAND_NAME}, {first}!\n\nYour digital essentials in one place. Browse products, manage wallet requests, and track orders."
         if not keyboard:
             welcome += "\n\nThe app link is being configured. Please try again shortly."
         await reply(welcome, keyboard)
     elif command in ("/help", "/commands"):
-        await reply("FLUX commands\n/start — open the store\n/balance — view wallet balance\n/orders — recent orders\n/help — this message\n\nPayments are manually reviewed. Never send funds until official recipient instructions are configured.")
+        await reply(f"{BRAND_NAME} commands\n/start — open the store\n/balance — view wallet balance\n/orders — recent orders\n/help — this message\n\nPayments are manually reviewed. Never send funds until official recipient instructions are configured.")
     elif command == "/balance":
         with db() as c:
             row = c.execute("SELECT balance_cents FROM users WHERE telegram_id=?", (int(telegram_id),)).fetchone()
-        await reply("Your FLUX wallet balance: USD " + format((row["balance_cents"] if row else 0) / 100, ".2f"))
+        await reply("Your wallet balance: USD " + format((row["balance_cents"] if row else 0) / 100, ".2f"))
     elif command == "/orders":
         with db() as c:
             rows = c.execute("SELECT id,product_id,status,created_at FROM orders WHERE telegram_id=? ORDER BY created_at DESC LIMIT 5", (int(telegram_id),)).fetchall()
         if not rows:
-            await reply("You do not have any FLUX orders yet.")
+            await reply("You do not have any orders yet.")
         else:
-            lines = ["Your latest FLUX orders:"]
+            lines = ["Your latest orders:"]
             for row in rows:
                 lines.append(f"• {row['id']} — {row['product_id'].replace('-', ' ')} ({row['status'].replace('_', ' ')})")
             await reply("\n".join(lines), keyboard)
@@ -205,7 +217,7 @@ async def telegram_webhook(secret: str, update: dict, request: Request):
                 orders_n = c.execute("SELECT COUNT(*) n FROM orders").fetchone()["n"]
                 pending_n = c.execute("SELECT COUNT(*) n FROM topups WHERE status='pending'").fetchone()["n"]
                 balance_n = c.execute("SELECT COALESCE(SUM(balance_cents),0) n FROM users").fetchone()["n"]
-            await reply(f"FLUX admin overview\nUsers: {users_n}\nOrders: {orders_n}\nPending top-ups: {pending_n}\nTotal wallet liabilities: USD {balance_n/100:.2f}")
+            await reply(f"{BRAND_NAME} admin overview\nUsers: {users_n}\nOrders: {orders_n}\nPending top-ups: {pending_n}\nTotal wallet liabilities: USD {balance_n/100:.2f}")
         else:
             with db() as c:
                 rows = c.execute("SELECT id,telegram_id,method,base_cents,tx_reference FROM topups WHERE status='pending' ORDER BY created_at ASC LIMIT 15").fetchall()
@@ -229,7 +241,7 @@ async def telegram_webhook(secret: str, update: dict, request: Request):
                     with db() as c:
                         row = c.execute("SELECT telegram_id,base_cents FROM topups WHERE id=?", (result["id"],)).fetchone()
                     try:
-                        await telegram_api("sendMessage", {"chat_id": row["telegram_id"], "text": f"Your FLUX top-up {result['id']} has been approved. Wallet credit: USD {row['base_cents']/100:.2f}."})
+                        await telegram_api("sendMessage", {"chat_id": row["telegram_id"], "text": f"Your top-up {result['id']} has been approved. Wallet credit: USD {row['base_cents']/100:.2f}."})
                     except Exception:
                         pass
             except HTTPException as exc:
@@ -259,12 +271,12 @@ def decide_topup_record(tid: str, decision: str, note: str | None = None):
                       ("LG-" + secrets.token_hex(5), row["telegram_id"], row["base_cents"], "topup", tid, now))
     return {"id": tid, "status": decision + "d", "note": note}
 
-@app.get("/flux-mark.svg")
-def flux_mark():
-    built_logo = os.path.join(FRONTEND_DIST, "flux-mark.svg")
-    if os.path.isfile(built_logo):
-        return FileResponse(built_logo, media_type="image/svg+xml")
-    raise HTTPException(404, "Logo not found")
+@app.get("/favicon.svg")
+def favicon():
+    built_icon = os.path.join(FRONTEND_DIST, "favicon.svg")
+    if os.path.isfile(built_icon):
+        return FileResponse(built_icon, media_type="image/svg+xml")
+    raise HTTPException(404, "Icon not found")
 
 def spa_index():
     built = os.path.join(FRONTEND_DIST, "index.html")
@@ -285,7 +297,7 @@ def admin_console(rest: str = ""):
 @app.get("/health")
 def health(): return {"status":"ok","service":"flux-api"}
 @app.get("/api/config")
-def config(): return {"brand":"FLUX","demo_mode":os.getenv("FLUX_DEMO_MODE","false").lower()=="true","payment_ttl_minutes":TTL,"currency":"USD"}
+def config(): return {"brand":BRAND_NAME,"demo_mode":os.getenv("FLUX_DEMO_MODE","false").lower()=="true","payment_ttl_minutes":TTL,"currency":"USD"}
 @app.get("/api/products")
 def products(category:str|None=None,q:str|None=None):
     items=PRODUCTS
@@ -414,3 +426,71 @@ def admin_topups(u=Depends(admin)):
 @app.post("/api/admin/topups/{tid}")
 def decide_topup(tid: str, b: AdminDecision, u=Depends(admin)):
     return decide_topup_record(tid, b.decision, b.note)
+
+# ── Sponsored ads ──────────────────────────────────────────────────────────
+AD_PLACEMENTS = {"home", "shop"}
+
+def clean_https(value, label):
+    if value is None or not value.strip():
+        return None
+    value = value.strip()
+    if not value.startswith("https://") or len(value) > 500:
+        raise HTTPException(400, f"{label} must be a secure https:// link")
+    return value
+
+@app.get("/api/ads")
+def public_ads(placement: str = "home"):
+    if placement not in AD_PLACEMENTS:
+        raise HTTPException(400, "Unknown placement")
+    now = datetime.now(timezone.utc).isoformat()
+    with db() as c:
+        rows = c.execute(
+            "SELECT id,title,body,cta,link_url,image_url,placement,ends_at FROM ads "
+            "WHERE active=? AND placement=? AND (ends_at IS NULL OR ends_at>?) ORDER BY created_at DESC LIMIT 3",
+            (1, placement, now)).fetchall()
+    return [dict(r) for r in rows]
+
+@app.get("/api/admin/ads")
+def admin_ads(u=Depends(admin)):
+    with db() as c:
+        rows = c.execute("SELECT * FROM ads ORDER BY created_at DESC LIMIT 100").fetchall()
+    return [dict(r, active=bool(r["active"])) for r in rows]
+
+@app.post("/api/admin/ads")
+def admin_create_ad(b: AdCreate, u=Depends(admin)):
+    if b.placement not in AD_PLACEMENTS:
+        raise HTTPException(400, "Placement must be home or shop")
+    ends = None
+    if b.ends_at and b.ends_at.strip():
+        try:
+            parsed = datetime.fromisoformat(b.ends_at.strip())
+        except ValueError:
+            raise HTTPException(400, "End date must look like 2026-12-31")
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        ends = parsed.astimezone(timezone.utc).isoformat()
+    aid = "AD-" + secrets.token_hex(4).upper()
+    with db() as c:
+        c.execute(
+            "INSERT INTO ads(id,title,body,cta,link_url,image_url,placement,active,ends_at,created_at) VALUES(?,?,?,?,?,?,?,1,?,?)",
+            (aid, b.title.strip(), (b.body or "").strip() or None, (b.cta or "").strip() or None,
+             clean_https(b.link_url, "Link"), clean_https(b.image_url, "Image"),
+             b.placement, ends, datetime.now(timezone.utc).isoformat()))
+    return {"id": aid}
+
+@app.post("/api/admin/ads/{ad_id}")
+def admin_set_ad_status(ad_id: str, b: AdStatus, u=Depends(admin)):
+    with db() as c:
+        cur = c.execute("UPDATE ads SET active=? WHERE id=?", (1 if b.active else 0, ad_id))
+        if cur.rowcount != 1:
+            raise HTTPException(404, "Ad not found")
+    return {"id": ad_id, "active": b.active}
+
+@app.delete("/api/admin/ads/{ad_id}")
+def admin_delete_ad(ad_id: str, u=Depends(admin)):
+    with db() as c:
+        cur = c.execute("DELETE FROM ads WHERE id=?", (ad_id,))
+        if cur.rowcount != 1:
+            raise HTTPException(404, "Ad not found")
+    return {"id": ad_id, "deleted": True}
+

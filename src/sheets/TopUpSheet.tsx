@@ -59,7 +59,7 @@ export function TopUpSheet({ onCreated }: { onCreated: (t: TopupCreated) => void
           </button>
         ))}
       </div>
-      <Notice tone="warn">Recipient details are not configured yet. Don’t send money until official payment instructions are published by FLUX.</Notice>
+      <Notice tone="warn">Recipient details are not configured yet. Don’t send money until official payment instructions are published by the store.</Notice>
       <Button full size="lg" loading={busy} disabled={!valid} onClick={submit}>Continue</Button>
     </>
   );

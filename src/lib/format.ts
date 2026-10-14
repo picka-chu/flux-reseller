@@ -18,8 +18,11 @@ export const dateTime = (iso: string) =>
 
 export type Tone = "up" | "down" | "warn" | "neutral";
 export function statusTone(status: string): Tone {
-  if (["approved", "delivered"].includes(status)) return "up";
+  if (["approved", "delivered", "active"].includes(status)) return "up";
   if (["rejected", "failed", "refunded", "expired"].includes(status)) return "down";
   if (["pending", "pending_review", "processing"].includes(status)) return "warn";
   return "neutral";
 }
+
+/** Short billing suffix for subscription prices. */
+export const periodSuffix = (p?: string) => (p === "month" ? "/month" : p === "year" ? "/year" : "");
