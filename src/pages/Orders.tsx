@@ -24,7 +24,7 @@ export function Orders({ orders, loading, error, onRefresh, onExplore }: { order
       </div>
       <SectionHeader title="History" action={<button onClick={onRefresh} className="flex items-center gap-1.5 text-[13px] font-semibold text-brand"><RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Refresh</button>} />
       <div className="card overflow-hidden">
-        {loading && !orders ? <ListSkeleton rows={4} />
+        {loading ? <ListSkeleton rows={4} />
           : list.length ? <div className="divide-y divide-line">
               {list.map((o) => (
                 <div key={o.id}>
