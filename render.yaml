@@ -10,6 +10,8 @@ services:
         sync: false
       - key: ADMIN_TELEGRAM_IDS
         sync: false
+      - key: SUPABASE_DB_URL
+        sync: false
       - key: FLUX_DEMO_MODE
         value: "false"
       - key: PAYMENT_TTL_MINUTES
