@@ -35,8 +35,8 @@ export function Home({ me, meLoading, feed, feedLoading, feedError, onBuy, onTop
         </div>
       ) : feedError && !feed ? (
         <div className="card"><Empty icon={PackageSearch} title="Couldn't load the feed" text={feedError} action={<button onClick={onRetry} className="btn btn-secondary btn-sm">Try again</button>} /></div>
-      ) : feed?.length ? (
-        feed.map((section) => (
+      ) : feed?.some((section) => section.items.length > 0) ? (
+        feed.filter((section) => section.items.length > 0).map((section) => (
           <section key={section.key} className="mb-8">
             <div className="mb-3">
               <h2 className="text-[19px] font-bold tracking-tight">{section.title}</h2>
