@@ -22,6 +22,9 @@ app.mount("/static", StaticFiles(directory=os.path.join(ROOT, "static")), name="
 FRONTEND_DIST = os.path.join(ROOT, "frontend_dist")
 if os.path.isdir(os.path.join(FRONTEND_DIST, "assets")):
     app.mount("/assets", StaticFiles(directory=os.path.join(FRONTEND_DIST, "assets")), name="frontend-assets")
+FRONTEND_DIST = os.path.join(ROOT, "frontend_dist")
+if os.path.isdir(os.path.join(FRONTEND_DIST, "assets")):
+    app.mount("/assets", StaticFiles(directory=os.path.join(FRONTEND_DIST, "assets")), name="frontend-assets")
 
 PRODUCTS = [
  {"id":"spotify-premium","name":"Spotify Premium","category":"Music","description":"Sample listing; availability must be confirmed.","price":4.99,"icon":"♫","accent":"green","tag":"Popular"},
@@ -260,9 +263,16 @@ def decide_topup_record(tid: str, decision: str, note: str | None = None):
                       ("LG-" + secrets.token_hex(5), row["telegram_id"], row["base_cents"], "topup", tid, now))
     return {"id": tid, "status": decision + "d", "note": note}
 
-@app.get("/") 
+@app.get("/flux-mark.svg")
+def flux_mark():
+    built_logo = os.path.join(FRONTEND_DIST, "flux-mark.svg")
+    if os.path.isfile(built_logo):
+        return FileResponse(built_logo, media_type="image/svg+xml")
+    raise HTTPException(404, "Logo not found")
+
+@app.get("/")
 def home():
-    built = os.path.join(ROOT, "frontend_dist", "index.html")
+    built = os.path.join(FRONTEND_DIST, "index.html")
     return FileResponse(built if os.path.isfile(built) else os.path.join(ROOT, "static", "index.html"))
 @app.get("/health")
 def health(): return {"status":"ok","service":"flux-api"}
