@@ -16,7 +16,7 @@ export function Wallet({ me, meLoading, topups, loading, error, onTopup, onRefre
 
       <SectionHeader title="Activity" action={<button onClick={onRefresh} className="flex items-center gap-1.5 text-[13px] font-semibold text-brand"><RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Refresh</button>} />
       <div className="card overflow-hidden">
-        {loading && !topups ? <ListSkeleton rows={3} />
+        {loading ? <ListSkeleton rows={3} />
           : topups?.length ? <div className="divide-y divide-line">
               {topups.map((t) => (
                 <ActivityRow key={t.id} icon={ArrowDownLeft} title={`${titleCase(t.method)} deposit`} subtitle={`${dateTime(t.created_at)} · ${t.reference}`} amount={`+${money(t.amount)}`} positive={t.status === "approved"} status={t.status} />
