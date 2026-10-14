@@ -19,6 +19,9 @@ WEBAPP_URL = os.getenv("FLUX_WEBAPP_URL", os.getenv("RENDER_EXTERNAL_URL", "")).
 WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", secrets.token_urlsafe(32))
 app = FastAPI(title="FLUX API", version="0.1.0")
 app.mount("/static", StaticFiles(directory=os.path.join(ROOT, "static")), name="static")
+FRONTEND_DIST = os.path.join(ROOT, "frontend_dist")
+if os.path.isdir(os.path.join(FRONTEND_DIST, "assets")):
+    app.mount("/assets", StaticFiles(directory=os.path.join(FRONTEND_DIST, "assets")), name="frontend-assets")
 
 PRODUCTS = [
  {"id":"spotify-premium","name":"Spotify Premium","category":"Music","description":"Sample listing; availability must be confirmed.","price":4.99,"icon":"♫","accent":"green","tag":"Popular"},
