@@ -72,7 +72,7 @@ export default function App() {
           {tab === "shop" && (
             <Shop
               products={products.data} productsLoading={products.loading} productsError={products.error}
-              onBuy={(product) => setSheet({ type: "product", product })} onRetry={products.reload}
+              onBuy={setSelectedProduct} onRetry={products.reload}
             />
           )}
           {tab === "wallet" && <Wallet me={me.data} meLoading={me.loading} topups={topups.data} loading={topups.loading} error={topups.error} onTopup={openTopup} onRefresh={topups.reload} />}
