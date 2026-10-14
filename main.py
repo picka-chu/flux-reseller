@@ -18,10 +18,6 @@ TTL = int(os.getenv("PAYMENT_TTL_MINUTES", "20"))
 WEBAPP_URL = os.getenv("FLUX_WEBAPP_URL", os.getenv("RENDER_EXTERNAL_URL", "")).rstrip("/")
 WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", secrets.token_urlsafe(32))
 app = FastAPI(title="FLUX API", version="0.1.0")
-app.mount("/static", StaticFiles(directory=os.path.join(ROOT, "static")), name="static")
-FRONTEND_DIST = os.path.join(ROOT, "frontend_dist")
-if os.path.isdir(os.path.join(FRONTEND_DIST, "assets")):
-    app.mount("/assets", StaticFiles(directory=os.path.join(FRONTEND_DIST, "assets")), name="frontend-assets")
 FRONTEND_DIST = os.path.join(ROOT, "frontend_dist")
 if os.path.isdir(os.path.join(FRONTEND_DIST, "assets")):
     app.mount("/assets", StaticFiles(directory=os.path.join(FRONTEND_DIST, "assets")), name="frontend-assets")
@@ -270,10 +266,22 @@ def flux_mark():
         return FileResponse(built_logo, media_type="image/svg+xml")
     raise HTTPException(404, "Logo not found")
 
+def spa_index():
+    built = os.path.join(FRONTEND_DIST, "index.html")
+    if not os.path.isfile(built):
+        raise HTTPException(503, "Frontend is not built. Run: npm install && npm run build")
+    return FileResponse(built, headers={"Cache-Control": "no-cache"})
+
 @app.get("/")
 def home():
-    built = os.path.join(FRONTEND_DIST, "index.html")
-    return FileResponse(built if os.path.isfile(built) else os.path.join(ROOT, "static", "index.html"))
+    return spa_index()
+
+@app.get("/admin")
+@app.get("/admin/{rest:path}")
+def admin_console(rest: str = ""):
+    # The React app switches to the operations console when the path starts with /admin.
+    # Every admin API call is still protected server-side by ADMIN_TELEGRAM_IDS.
+    return spa_index()
 @app.get("/health")
 def health(): return {"status":"ok","service":"flux-api"}
 @app.get("/api/config")
