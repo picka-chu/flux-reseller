@@ -5,7 +5,7 @@ on:
   pull_request:
     branches: [main]
 jobs:
-  syntax:
+  validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,9 +15,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+      - name: Install frontend dependencies
+        run: npm install
+      - name: Build React and Tailwind frontend
+        run: npm run build
       - name: Check Python syntax
         run: python -m py_compile main.py
-      - name: Build React and Tailwind frontend
-        run: npm install && npm run build
       - name: Check legacy JavaScript syntax
         run: node --check static/app.js
