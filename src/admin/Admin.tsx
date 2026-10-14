@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "react";
 import {
-  AlertTriangle, Boxes, Check, ChevronRight, Coins, LayoutDashboard, Megaphone, Moon, Package, Receipt, RefreshCw,
+  AlertTriangle, Boxes, Check, ChevronRight, Coins, LayoutDashboard, Megaphone, Moon, MoreHorizontal, Package, Receipt, RefreshCw,
   Search, Settings, ShieldCheck, Sun, TrendingUp, UserPlus, Users, Wallet, X, type LucideIcon
 } from "lucide-react";
 import { BrandMark } from "../components/Chrome";
 import { BRAND } from "../lib/brand";
-import { Button, Empty, Segmented, StatusPill, ToastProvider, useToast } from "../components/ui";
+import { Button, Empty, Segmented, Sheet, StatusPill, ToastProvider, useToast } from "../components/ui";
 import { useTheme } from "../hooks/useTheme";
 import { post, request } from "../lib/api";
 import { confirmAction } from "../lib/telegram";
@@ -49,6 +49,7 @@ function Console() {
   const [catalog, setCatalog] = useState<AdminCatalog | null>(null);
   const [settingsData, setSettingsData] = useState<AdminSettings | null>(null);
   const [search, setSearch] = useState("");
+  const [moreOpen, setMoreOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [acting, setActing] = useState("");
@@ -94,23 +95,25 @@ function Console() {
   const fUsers = useMemo(() => users.filter((u) => match(u.telegram_id, u.username, u.first_name)), [users, q]); // eslint-disable-line react-hooks/exhaustive-deps
   const count = page === "topups" ? topups.length : page === "orders" ? orders.length : users.length;
   const [title, subtitle] = TITLES[page];
+  const navigate = (p: Page) => { setPage(p); setSearch(""); setMoreOpen(false); };
+  const MORE_PAGES: Page[] = ["ads", "catalog", "settings"];
 
   return (
     <div className="mx-auto min-h-dvh max-w-7xl px-4 pb-12 sm:px-7">
-      <header className="sticky top-0 z-20 -mx-4 flex h-16 items-center justify-between border-b border-line bg-bg/85 px-4 backdrop-blur-xl sm:-mx-7 sm:px-7">
-        <a href="/" className="flex items-center gap-2.5"><BrandMark size={32} /><span className="text-[16px] font-semibold tracking-tight">{BRAND}</span><span className="rounded-full bg-fill px-2.5 py-0.5 text-[12px] font-semibold text-muted">Operations</span></a>
+      <header className="sticky top-0 z-20 -mx-4 flex h-14 items-center justify-between border-b border-line bg-bg/90 px-4 backdrop-blur-xl sm:-mx-7 sm:h-16 sm:px-7">
+        <a href="/" className="flex items-center gap-2.5"><BrandMark size={32} /><span className="text-[16px] font-semibold tracking-tight">{BRAND}</span><span className="hidden rounded-full bg-fill px-2.5 py-0.5 text-[12px] font-semibold text-muted sm:inline-flex">Operations</span></a>
         <div className="flex items-center gap-2">
-          {page === "orders" && <Button variant="secondary" size="sm" onClick={syncOrders}>Check supplier</Button>}
+          {page === "orders" && <Button variant="secondary" size="sm" aria-label="Check supplier" onClick={syncOrders}><RefreshCw size={16} /><span className="hidden sm:inline">Check supplier</span></Button>}
           <Button variant="secondary" size="sm" aria-label="Toggle theme" onClick={() => theme.setMode(theme.resolved === "dark" ? "light" : "dark")}>{theme.resolved === "dark" ? <Sun size={16} /> : <Moon size={16} />}</Button>
           <Button variant="secondary" size="sm" aria-label="Refresh" onClick={load}><RefreshCw size={16} className={loading ? "animate-spin" : ""} /></Button>
         </div>
       </header>
 
-      <div className="grid gap-7 pt-6 md:grid-cols-[210px_minmax(0,1fr)]">
-        <aside>
-          <nav className="scroll-x -mx-4 flex gap-1 overflow-x-auto px-4 md:mx-0 md:flex-col md:px-0">
+      <div className="grid gap-5 pt-4 md:grid-cols-[210px_minmax(0,1fr)] md:gap-7 md:pt-6">
+        <aside className="hidden md:block">
+          <nav className="flex flex-col gap-1">
             {NAV.map(({ id, label, icon: Icon }) => (
-              <button key={id} onClick={() => { setPage(id); setSearch(""); }} className={`flex shrink-0 items-center gap-3 rounded-full px-4 py-2.5 text-[14px] font-semibold transition md:rounded-xl ${page === id ? "bg-brand-soft text-brand" : "text-muted hover:bg-fill hover:text-ink"}`}>
+              <button key={id} onClick={() => navigate(id)} className={`flex items-center gap-3 rounded-xl px-4 py-2.5 text-[14px] font-semibold transition ${page === id ? "bg-brand-soft text-brand" : "text-muted hover:bg-fill hover:text-ink"}`}>
                 <Icon size={18} strokeWidth={1.9} /><span className="flex-1 text-left">{label}</span>
                 {id === "topups" && !!overview?.pending_topups && <span className="rounded-full bg-brand px-2 py-0.5 text-[11px] font-bold text-white dark:text-[#0a0b0d]">{overview.pending_topups}</span>}
               </button>
@@ -122,7 +125,7 @@ function Console() {
           </div>
         </aside>
 
-        <main className="min-w-0 animate-rise" key={page}>
+        <main className="min-w-0 animate-rise pb-28 md:pb-0" key={page}>
           {error && (
             <div className="mb-5 flex gap-3 rounded-2xl bg-down/10 p-4 text-[14px] text-down">
               <AlertTriangle size={18} className="mt-0.5 shrink-0" />
@@ -130,7 +133,7 @@ function Console() {
             </div>
           )}
           <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
-            <div><h1 className="text-[32px] font-bold tracking-tight">{title}</h1><p className="mt-1 text-[15px] text-muted">{subtitle}</p></div>
+            <div><h1 className="text-[26px] font-bold tracking-tight sm:text-[32px]">{title}</h1><p className="mt-1 text-[14px] text-muted sm:text-[15px]">{subtitle}</p></div>
             {!["overview", "ads", "catalog", "settings"].includes(page) && <span className="text-[13px] text-muted">{count} records · latest 100</span>}
           </div>
 
@@ -196,6 +199,45 @@ function Console() {
           )}
         </main>
       </div>
+
+      <nav aria-label="Admin" className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-bg/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden">
+        <div className="mx-auto flex max-w-2xl">
+          {([["overview", "Overview", LayoutDashboard], ["topups", "Top-ups", Wallet], ["orders", "Orders", Package], ["customers", "Customers", Users]] as [Page, string, LucideIcon][]).map(([id, label, Icon]) => {
+            const active = page === id;
+            const pending = id === "topups" ? (overview?.pending_topups ?? 0) : 0;
+            return (
+              <button key={id} onClick={() => navigate(id)} aria-current={active ? "page" : undefined}
+                      className={`flex min-h-[56px] flex-1 flex-col items-center justify-center gap-1 text-[11px] font-semibold ${active ? "text-brand" : "text-muted"}`}>
+                <span className="relative">
+                  <Icon size={22} strokeWidth={active ? 2.2 : 1.8} />
+                  {pending > 0 && <span className="absolute -right-2.5 -top-1.5 min-w-[18px] rounded-full bg-brand px-1 text-center text-[10px] font-bold leading-[18px] text-white dark:text-[#0a0b0d]">{pending}</span>}
+                </span>
+                {label}
+              </button>
+            );
+          })}
+          <button onClick={() => setMoreOpen(true)} aria-current={MORE_PAGES.includes(page) ? "page" : undefined}
+                  className={`flex min-h-[56px] flex-1 flex-col items-center justify-center gap-1 text-[11px] font-semibold ${MORE_PAGES.includes(page) ? "text-brand" : "text-muted"}`}>
+            <MoreHorizontal size={22} strokeWidth={MORE_PAGES.includes(page) ? 2.2 : 1.8} />
+            More
+          </button>
+        </div>
+      </nav>
+
+      {moreOpen && (
+        <Sheet onClose={() => setMoreOpen(false)}>
+          <p className="mb-3 text-[16px] font-semibold">More</p>
+          <div className="card divide-y divide-line overflow-hidden">
+            {NAV.filter((n) => MORE_PAGES.includes(n.id)).map(({ id, label, icon: Icon }) => (
+              <button key={id} onClick={() => navigate(id)} className="flex min-h-[56px] w-full items-center gap-3.5 px-4 py-3 text-left active:bg-fill">
+                <span className="grid h-10 w-10 place-items-center rounded-full bg-fill"><Icon size={18} /></span>
+                <b className="flex-1 text-[15px] font-semibold">{label}</b>
+                <ChevronRight size={18} className="text-muted" />
+              </button>
+            ))}
+          </div>
+        </Sheet>
+      )}
     </div>
   );
 }
@@ -233,13 +275,13 @@ function DashboardPanel({ d, o, go }: { d: AdminDashboard | null; o: AdminOvervi
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         {kpis.map(({ icon: Icon, label, value, note }) => (
-          <div key={label} className="card p-5">
+          <div key={label} className="card p-4 sm:p-5">
             <div className="mb-4 flex items-center justify-between">
               <span className="grid h-10 w-10 place-items-center rounded-full bg-fill"><Icon size={18} /></span>
               {note && <span className="text-right text-[12px] font-medium text-muted">{note}</span>}
             </div>
             <p className="text-[13px] text-muted">{label}</p>
-            <b className="num mt-0.5 block text-[28px] font-bold leading-tight">{value}</b>
+            <b className="num mt-0.5 block text-[24px] font-bold leading-tight sm:text-[28px]">{value}</b>
           </div>
         ))}
       </div>
@@ -255,7 +297,7 @@ function DashboardPanel({ d, o, go }: { d: AdminDashboard | null; o: AdminOvervi
             </div>
             <div className="w-56"><Segmented value={metric} onChange={setMetric} options={[{ value: "revenue", label: "Revenue" }, { value: "orders", label: "Orders" }]} /></div>
           </div>
-          <div className="mt-6 flex h-48 items-end gap-1.5">
+          <div className="mt-6 flex h-40 items-end gap-1.5 sm:h-48">
             {d?.series.map((x, i) => {
               const v = values[i];
               const h = v > 0 ? Math.max(6, (v / peak) * 100) : 2;
@@ -351,7 +393,7 @@ function Table({ cols, head, children, empty }: { cols: string; head: string[]; 
     </>
   );
 }
-const Row = ({ cols, children }: { cols: string; children: ReactNode }) => <div className={`grid gap-3 px-5 py-4 md:items-center ${cols}`}>{children}</div>;
+const Row = ({ cols, children }: { cols: string; children: ReactNode }) => <div className={`grid gap-3 px-4 py-4 md:items-center md:px-5 ${cols}`}>{children}</div>;
 const Cell = ({ title, sub, capitalize, breakSub }: { title: string; sub: string; capitalize?: boolean; breakSub?: boolean }) => (
   <div className="min-w-0"><b className={`block truncate text-[14px] font-semibold ${capitalize ? "capitalize" : ""}`}>{title}</b><span className={`block text-[12px] text-muted ${breakSub ? "break-all" : "truncate"}`}>{sub}</span></div>
 );
@@ -435,7 +477,7 @@ function AdsPanel({ ads, reload }: { ads: AdminAd[]; reload: () => Promise<void>
           <AdField label="Description">
             <textarea className="input min-h-[88px] py-3" style={{ height: "auto" }} maxLength={240} value={form.body} onChange={field("body")} placeholder="One line about the offer" />
           </AdField>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <AdField label="Button text">
               <input className="input" maxLength={24} value={form.cta} onChange={field("cta")} placeholder="Learn more" />
             </AdField>
