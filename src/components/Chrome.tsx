@@ -31,7 +31,7 @@ export function Header({ onProfile, name }: { onProfile: () => void; name?: stri
 export function BottomNav({ tab, onChange }: { tab: Tab; onChange: (t: Tab) => void }) {
   return (
     <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-bg/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl" aria-label="Main">
-      <div className="mx-auto flex max-w-2xl">
+      <div className="mx-auto flex max-w-[480px]">
         {TABS.map(({ id, label, icon: Icon }) => {
           const active = tab === id;
           return (
