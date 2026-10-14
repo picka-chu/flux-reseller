@@ -1,6 +1,7 @@
 import os, json, hmac, hashlib, time, secrets, sqlite3
 from urllib.parse import parse_qsl
 from contextlib import contextmanager
+from psycopg.rows import dict_row
 from datetime import datetime, timezone, timedelta
 from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.responses import FileResponse
@@ -8,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
+DATABASE_URL = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL", "")
 DB_PATH = os.getenv("DATABASE_PATH", os.path.join(ROOT, "flux.db"))
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 ADMIN_IDS = {int(x) for x in os.getenv("ADMIN_TELEGRAM_IDS", "").split(",") if x.strip().isdigit()}
@@ -24,12 +26,42 @@ PRODUCTS = [
  {"id":"cloud-storage","name":"Cloud Storage","category":"Productivity","description":"Sample listing; availability must be confirmed.","price":5.99,"icon":"▤","accent":"blue","tag":"Utility"},
 ]
 
+class DatabaseAdapter:
+    """Small compatibility layer so existing parameterized queries work on SQLite and PostgreSQL."""
+    def __init__(self, connection, postgres=False):
+        self.connection = connection
+        self.postgres = postgres
+
+    def execute(self, query, params=()):
+        if self.postgres:
+            query = query.replace("?", "%s")
+        return self.connection.execute(query, params)
+
+    def executescript(self, script):
+        if not self.postgres:
+            return self.connection.executescript(script)
+        for statement in script.split(";"):
+            if statement.strip():
+                self.execute(statement)
+
 @contextmanager
 def db():
-    c=sqlite3.connect(DB_PATH, timeout=15); c.row_factory=sqlite3.Row
+    if DATABASE_URL:
+        import psycopg
+        conn = psycopg.connect(DATABASE_URL, row_factory=dict_row, connect_timeout=10)
+        c = DatabaseAdapter(conn, postgres=True)
+    else:
+        conn = sqlite3.connect(DB_PATH, timeout=15)
+        conn.row_factory = sqlite3.Row
+        c = DatabaseAdapter(conn, postgres=False)
     try:
-        yield c; c.commit()
-    finally: c.close()
+        yield c
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 def init_db():
     with db() as c:
