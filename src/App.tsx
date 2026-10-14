@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft } from "lucide-react";
 import { BottomNav, Header, type Tab } from "./components/Chrome";
 import { Sheet, ToastProvider } from "./components/ui";
 import { useBackButton } from "./hooks/useBackButton";
