@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { PackageSearch, Search } from "lucide-react";
 import { AdSlot, PlanCard } from "../components/Blocks";
-import { Empty, ListSkeleton } from "../components/ui";
+import { Empty, ListSkeleton, Skeleton } from "../components/ui";
 import type { Product } from "../lib/types";
 
 interface Props {
@@ -41,9 +41,9 @@ export function Shop({ products, productsLoading, productsError, onBuy, onRetry 
 
       <AdSlot placement="shop" />
 
-      {productsLoading && !products ? <div className="card overflow-hidden"><ListSkeleton rows={5} /></div>
+      {productsLoading ? <div className="grid min-w-0 grid-cols-2 gap-3">{Array.from({ length: 6 }, (_, i) => <div key={i} className="min-w-0 overflow-hidden rounded-[18px] border border-line p-2.5"><Skeleton className="aspect-square w-full !rounded-[14px]" /><Skeleton className="mt-3 h-4 w-4/5" /><Skeleton className="mt-2 h-3 w-1/2" /><Skeleton className="mt-3 h-5 w-2/3" /></div>)}</div>
         : productsError && !products ? <div className="card"><Empty icon={PackageSearch} title="Couldn't load plans" text={productsError} action={<button onClick={onRetry} className="btn btn-secondary btn-sm">Try again</button>} /></div>
-        : filtered.length ? <div className="grid grid-cols-2 gap-3">{filtered.map((p) => <PlanCard key={p.id} product={p} onClick={() => onBuy(p)} />)}</div>
+        : filtered.length ? <div className="grid min-w-0 grid-cols-2 gap-3">{filtered.map((p) => <div key={p.id} className="min-w-0"><PlanCard product={p} onClick={() => onBuy(p)} /></div>)}</div>
         : <div className="card"><Empty icon={Search} title="No subscriptions found" text="Try another search or category." /></div>}
     </div>
   );
