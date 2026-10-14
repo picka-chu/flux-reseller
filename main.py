@@ -75,6 +75,11 @@ def init_db():
         CREATE TABLE IF NOT EXISTS ledger(id TEXT PRIMARY KEY,telegram_id INTEGER NOT NULL,delta_cents INTEGER NOT NULL,reason TEXT NOT NULL,reference TEXT NOT NULL UNIQUE,created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS orders(id TEXT PRIMARY KEY,telegram_id INTEGER NOT NULL,product_id TEXT NOT NULL,price_cents INTEGER NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,delivery_note TEXT);
         """)
+        # Telegram IDs exceed PostgreSQL's signed 32-bit INTEGER range.
+        # Convert existing production columns to BIGINT as an idempotent migration.
+        if c.postgres:
+            for table in ("users", "topups", "ledger", "orders"):
+                c.execute(f"ALTER TABLE {table} ALTER COLUMN telegram_id TYPE BIGINT")
 init_db()
 
 class TopupCreate(BaseModel):
