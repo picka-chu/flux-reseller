@@ -1,27 +1,26 @@
 import { BadgeCheck, MessageCircle, Package, ShieldCheck, Wallet } from "lucide-react";
 import { Avatar } from "../components/Chrome";
 import { MenuRow } from "../components/Blocks";
-import { Segmented } from "../components/ui";
+import { Segmented, Skeleton } from "../components/ui";
 import { money } from "../lib/format";
 import { inTelegram, tg } from "../lib/telegram";
 import type { ThemeMode } from "../hooks/useTheme";
 import type { Me } from "../lib/types";
 
-interface Props { me: Me | null; mode: ThemeMode; onMode: (m: ThemeMode) => void; go: (t: "wallet" | "orders") => void; onHelp: () => void; onSafety: () => void }
+interface Props { me: Me | null; meLoading?: boolean; mode: ThemeMode; onMode: (m: ThemeMode) => void; go: (t: "wallet" | "orders") => void; onHelp: () => void; onSafety: () => void }
 
-export function Profile({ me, mode, onMode, go, onHelp, onSafety }: Props) {
+export function Profile({ me, meLoading = false, mode, onMode, go, onHelp, onSafety }: Props) {
   const name = me?.first_name || tg?.initDataUnsafe?.user?.first_name || "Welcome";
   const handle = me?.username || tg?.initDataUnsafe?.user?.username;
   return (
     <div className="animate-rise">
       <section className="flex flex-col items-center pb-6 pt-5 text-center">
-        <Avatar name={name} size={80} />
-        <h1 className="mt-3 text-[24px] font-bold tracking-tight">{name}</h1>
-        <p className="text-[14px] text-muted">{handle ? `@${handle}` : "Telegram account"}</p>
+        {meLoading ? <Skeleton className="h-20 w-20 !rounded-full" /> : <Avatar name={name} size={80} />}
+        {meLoading ? <><Skeleton className="mt-3 h-6 w-36" /><Skeleton className="mt-2 h-4 w-24" /></> : <><h1 className="mt-3 text-[24px] font-bold tracking-tight">{name}</h1><p className="text-[14px] text-muted">{handle ? `@${handle}` : "Telegram account"}</p></>}
         {inTelegram && <span className="mt-2 inline-flex items-center gap-1 rounded-full bg-up/10 px-2.5 py-1 text-[12px] font-semibold text-up"><BadgeCheck size={14} /> Verified via Telegram</span>}
         <div className="mt-5 grid w-full grid-cols-2 gap-3 text-left">
-          <div className="card p-4"><p className="text-[12px] text-muted">Balance</p><b className="num text-[20px]">{me ? money(me.balance) : "—"}</b></div>
-          <div className="card p-4"><p className="text-[12px] text-muted">Orders</p><b className="num text-[20px]">{me ? me.orders_count : "—"}</b></div>
+          <div className="card min-w-0 p-4"><p className="text-[12px] text-muted">Balance</p>{meLoading ? <Skeleton className="mt-2 h-6 w-20" /> : <b className="num text-[20px]">{me ? money(me.balance) : "—"}</b>}</div>
+          <div className="card min-w-0 p-4"><p className="text-[12px] text-muted">Orders</p>{meLoading ? <Skeleton className="mt-2 h-6 w-12" /> : <b className="num text-[20px]">{me ? me.orders_count : "—"}</b>}</div>
         </div>
       </section>
 
