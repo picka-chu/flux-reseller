@@ -505,13 +505,25 @@ async def create_order(b:OrderCreate,u=Depends(current_user)):
     cost = cost_cents_of(live.get("price", row["supplier_price"]))
     sell = sell_cents(cost, row["margin_percent"], row["markup_cents"])
     oid = "OR-" + secrets.token_hex(4).upper(); now = datetime.now(timezone.utc).isoformat()
-    with db() as c:
-        updated = c.execute("UPDATE users SET balance_cents=balance_cents-? WHERE telegram_id=? AND balance_cents>=?", (sell, u["id"], sell))
-        if updated.rowcount != 1: raise HTTPException(400, "Insufficient balance. Add funds first.")
-        c.execute("INSERT INTO orders(id,telegram_id,product_id,price_cents,status,created_at,cost_cents,supplier_product_id,idempotency_key) VALUES(?,?,?,?,?,?,?,?,?)",
-                  (oid, u["id"], f"sup-{sid}", sell, "processing", now, cost, sid, b.idempotency_key))
-        c.execute("INSERT INTO ledger(id,telegram_id,delta_cents,reason,reference,created_at) VALUES(?,?,?,?,?,?)",
-                  ("LG-" + secrets.token_hex(5), u["id"], -sell, "order", oid, now))
+    try:
+        with db() as c:
+            updated = c.execute("UPDATE users SET balance_cents=balance_cents-? WHERE telegram_id=? AND balance_cents>=?", (sell, u["id"], sell))
+            if updated.rowcount != 1: raise HTTPException(400, "Insufficient balance. Add funds first.")
+            c.execute("INSERT INTO orders(id,telegram_id,product_id,price_cents,status,created_at,cost_cents,supplier_product_id,idempotency_key) VALUES(?,?,?,?,?,?,?,?,?)",
+                      (oid, u["id"], f"sup-{sid}", sell, "processing", now, cost, sid, b.idempotency_key))
+            c.execute("INSERT INTO ledger(id,telegram_id,delta_cents,reason,reference,created_at) VALUES(?,?,?,?,?,?)",
+                      ("LG-" + secrets.token_hex(5), u["id"], -sell, "order", oid, now))
+    except Exception:
+        # The unique index is the final guard against two simultaneous requests sharing a key.
+        # If another request won the race, return that order rather than exposing a DB error.
+        if b.idempotency_key:
+            with db() as c:
+                existing = c.execute("SELECT id,status FROM orders WHERE telegram_id=? AND idempotency_key=?",
+                                     (u["id"], b.idempotency_key)).fetchone()
+            if existing:
+                return {"id": existing["id"], "status": existing["status"],
+                        "message": "This purchase request was already received."}
+        raise
     try:
         resp = await supplier_request("POST", "/orders", json_body={"productId": sid, "quantity": 1})
     except SupplierError as err:
