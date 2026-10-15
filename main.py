@@ -74,7 +74,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS topups(id TEXT PRIMARY KEY,telegram_id INTEGER NOT NULL,method TEXT NOT NULL,base_cents INTEGER NOT NULL,expected_millis INTEGER NOT NULL,status TEXT NOT NULL,reference TEXT NOT NULL,expires_at TEXT NOT NULL,tx_reference TEXT,created_at TEXT NOT NULL,reviewed_at TEXT);
         CREATE UNIQUE INDEX IF NOT EXISTS unique_pending_amount ON topups(method,expected_millis) WHERE status='pending';
         CREATE TABLE IF NOT EXISTS ledger(id TEXT PRIMARY KEY,telegram_id INTEGER NOT NULL,delta_cents INTEGER NOT NULL,reason TEXT NOT NULL,reference TEXT NOT NULL UNIQUE,created_at TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS orders(id TEXT PRIMARY KEY,telegram_id INTEGER NOT NULL,product_id TEXT NOT NULL,price_cents INTEGER NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,delivery_note TEXT);
+        CREATE TABLE IF NOT EXISTS orders(id TEXT PRIMARY KEY,telegram_id INTEGER NOT NULL,product_id TEXT NOT NULL,price_cents INTEGER NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,delivery_note TEXT, idempotency_key TEXT);
         CREATE TABLE IF NOT EXISTS catalog(id INTEGER PRIMARY KEY,name TEXT NOT NULL,description TEXT,supplier_price TEXT NOT NULL,currency TEXT,stock INTEGER NOT NULL DEFAULT 0,in_stock INTEGER NOT NULL DEFAULT 0,enabled INTEGER NOT NULL DEFAULT 1,margin_percent REAL,markup_cents INTEGER,category TEXT NOT NULL DEFAULT 'Subscriptions',period TEXT NOT NULL DEFAULT 'one-time',tag TEXT,display_name TEXT,removed INTEGER NOT NULL DEFAULT 0,synced_at TEXT);
         CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS support_threads(id TEXT PRIMARY KEY,telegram_id INTEGER NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
@@ -108,6 +108,8 @@ def migrate_and_seed():
         ensure_column(c, "orders", "supplier_product_id", "INTEGER")
         ensure_column(c, "orders", "supplier_order_code", "TEXT")
         ensure_column(c, "orders", "review_note", "TEXT")
+        ensure_column(c, "orders", "idempotency_key", "TEXT")
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS unique_order_idempotency ON orders(telegram_id, idempotency_key) WHERE idempotency_key IS NOT NULL")
         ensure_column(c, "catalog", "image_url", "TEXT")
         ensure_column(c, "catalog", "supplier_image", "TEXT")
         ensure_column(c, "catalog", "added_at", "TEXT")
@@ -129,6 +131,7 @@ class AdminDecision(BaseModel):
     note: str | None = None
 class OrderCreate(BaseModel):
     product_id: str
+    idempotency_key: str | None = Field(default=None, min_length=16, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
 class AdCreate(BaseModel):
     title: str = Field(min_length=2, max_length=80)
     body: str | None = Field(default=None, max_length=240)
@@ -480,6 +483,14 @@ def orders(u=Depends(current_user)):
 @app.post("/api/orders")
 async def create_order(b:OrderCreate,u=Depends(current_user)):
     ensure_user(u)
+    # A client-generated key makes network retries safe without charging twice.
+    if b.idempotency_key:
+        with db() as c:
+            existing = c.execute("SELECT id,status FROM orders WHERE telegram_id=? AND idempotency_key=?",
+                                 (u["id"], b.idempotency_key)).fetchone()
+        if existing:
+            return {"id": existing["id"], "status": existing["status"],
+                    "message": "This purchase request was already received."}
     sid = parse_product_id(b.product_id)
     with db() as c:
         row = c.execute("SELECT * FROM catalog WHERE id=? AND enabled=1 AND removed=0", (sid,)).fetchone()
@@ -494,13 +505,25 @@ async def create_order(b:OrderCreate,u=Depends(current_user)):
     cost = cost_cents_of(live.get("price", row["supplier_price"]))
     sell = sell_cents(cost, row["margin_percent"], row["markup_cents"])
     oid = "OR-" + secrets.token_hex(4).upper(); now = datetime.now(timezone.utc).isoformat()
-    with db() as c:
-        updated = c.execute("UPDATE users SET balance_cents=balance_cents-? WHERE telegram_id=? AND balance_cents>=?", (sell, u["id"], sell))
-        if updated.rowcount != 1: raise HTTPException(400, "Insufficient balance. Add funds first.")
-        c.execute("INSERT INTO orders(id,telegram_id,product_id,price_cents,status,created_at,cost_cents,supplier_product_id) VALUES(?,?,?,?,?,?,?,?)",
-                  (oid, u["id"], f"sup-{sid}", sell, "processing", now, cost, sid))
-        c.execute("INSERT INTO ledger(id,telegram_id,delta_cents,reason,reference,created_at) VALUES(?,?,?,?,?,?)",
-                  ("LG-" + secrets.token_hex(5), u["id"], -sell, "order", oid, now))
+    try:
+        with db() as c:
+            updated = c.execute("UPDATE users SET balance_cents=balance_cents-? WHERE telegram_id=? AND balance_cents>=?", (sell, u["id"], sell))
+            if updated.rowcount != 1: raise HTTPException(400, "Insufficient balance. Add funds first.")
+            c.execute("INSERT INTO orders(id,telegram_id,product_id,price_cents,status,created_at,cost_cents,supplier_product_id,idempotency_key) VALUES(?,?,?,?,?,?,?,?,?)",
+                      (oid, u["id"], f"sup-{sid}", sell, "processing", now, cost, sid, b.idempotency_key))
+            c.execute("INSERT INTO ledger(id,telegram_id,delta_cents,reason,reference,created_at) VALUES(?,?,?,?,?,?)",
+                      ("LG-" + secrets.token_hex(5), u["id"], -sell, "order", oid, now))
+    except Exception:
+        # The unique index is the final guard against two simultaneous requests sharing a key.
+        # If another request won the race, return that order rather than exposing a DB error.
+        if b.idempotency_key:
+            with db() as c:
+                existing = c.execute("SELECT id,status FROM orders WHERE telegram_id=? AND idempotency_key=?",
+                                     (u["id"], b.idempotency_key)).fetchone()
+            if existing:
+                return {"id": existing["id"], "status": existing["status"],
+                        "message": "This purchase request was already received."}
+        raise
     try:
         resp = await supplier_request("POST", "/orders", json_body={"productId": sid, "quantity": 1})
     except SupplierError as err:
