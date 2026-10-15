@@ -386,13 +386,13 @@ async def telegram_webhook(secret: str, update: dict, request: Request):
         if is_new:
             welcome = (
                 f"Welcome to {BRAND_NAME}, {first}! 👋\n\n"
-                "Subscriptions for the apps you use every day, all paid from one wallet.\n\n"
-                "Getting started:\n"
-                "1. Open the store and choose a plan.\n"
-                "2. Add funds: send your payment, then submit its reference in the app.\n"
-                "3. Once an administrator confirms the funds, your wallet is credited.\n"
-                "4. Subscribe and track every purchase under Orders.\n\n"
-                "Payments are reviewed by hand, so your balance updates after confirmation."
+                "Your subscriptions, all in one simple place.\n\n"
+                "🛍️ 1. Explore the available plans.\n"
+                "💳 2. Add funds using the payment details shown in the app.\n"
+                "🧾 3. Submit your payment reference for review.\n"
+                "📦 4. Choose a plan and track your order in Orders.\n\n"
+                "🔒 Wallet top-ups are checked by our team. Your balance updates after payment is confirmed.\n\n"
+                "Need help? Send /help or message us here."
             )
         else:
             with db() as c:
