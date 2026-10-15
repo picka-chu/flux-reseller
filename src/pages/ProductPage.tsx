@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ArrowLeft, Check, PackageCheck } from "lucide-react";
 import { Button, Notice, Skeleton, useToast } from "../components/ui";
 import { ProductArt } from "../components/Blocks";
@@ -19,6 +19,8 @@ interface Props {
 export function ProductPage({ product, me, meLoading, onBack, onTopup, onPurchased }: Props) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
+  // Keep the key when a request fails so retrying an uncertain response is safe.
+  const purchaseKey = useRef<string | null>(null);
   const short = me !== null && me.balance < product.price;
   const per = periodSuffix(product.period);
   const oneTime = product.period === "one-time";
@@ -26,7 +28,14 @@ export function ProductPage({ product, me, meLoading, onBack, onTopup, onPurchas
   const buy = async () => {
     setBusy(true);
     try {
-      const order = await post<{ id: string }>("/api/orders", { product_id: product.id });
+      purchaseKey.current ??= (typeof crypto !== "undefined" && "randomUUID" in crypto)
+        ? crypto.randomUUID().replace(/-/g, "")
+        : `${Date.now()}${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+      const order = await post<{ id: string }>("/api/orders", {
+        product_id: product.id,
+        idempotency_key: purchaseKey.current,
+      });
+      purchaseKey.current = null;
       onPurchased(order.id);
     } catch (error) {
       toast(error instanceof Error ? error.message : "Request failed", "error");
