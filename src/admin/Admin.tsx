@@ -285,8 +285,8 @@ function DashboardPanel({ d, o, go }: { d: AdminDashboard | null; o: AdminOvervi
         ))}
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
-        <section className="card p-5">
+      <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+        <section className="card min-w-0 p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="text-[17px] font-bold">Last 14 days</h2>
@@ -294,14 +294,14 @@ function DashboardPanel({ d, o, go }: { d: AdminDashboard | null; o: AdminOvervi
                 {d ? `${money(totalRevenue14)} revenue · ${totalOrders14} orders` : "Loading…"}
               </p>
             </div>
-            <div className="w-56"><Segmented value={metric} onChange={setMetric} options={[{ value: "revenue", label: "Revenue" }, { value: "orders", label: "Orders" }]} /></div>
+            <div className="w-full min-w-0 sm:w-56"><Segmented value={metric} onChange={setMetric} options={[{ value: "revenue", label: "Revenue" }, { value: "orders", label: "Orders" }]} /></div>
           </div>
-          <div className="mt-6 flex h-40 items-end gap-1.5 sm:h-48">
+          <div className="mt-6 flex h-40 min-w-0 items-end gap-1 sm:h-48 sm:gap-1.5">
             {d?.series.map((x, i) => {
               const v = values[i];
               const h = v > 0 ? Math.max(6, (v / peak) * 100) : 2;
               return (
-                <div key={x.date} className="group flex h-full flex-1 items-end">
+                <div key={x.date} className="group flex h-full min-w-0 flex-1 items-end">
                   <div
                     className={`w-full rounded-t-md transition ${v > 0 ? "bg-brand/80 group-hover:bg-brand" : "bg-fill"}`}
                     style={{ height: `${h}%` }}
@@ -333,7 +333,7 @@ function DashboardPanel({ d, o, go }: { d: AdminDashboard | null; o: AdminOvervi
         </section>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+      <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
         <section className="card overflow-hidden">
           <div className="flex items-center justify-between px-5 pb-2 pt-5">
             <div><h2 className="text-[17px] font-bold">Recent activity</h2><p className="text-[13px] text-muted">Latest orders and top-up requests</p></div>

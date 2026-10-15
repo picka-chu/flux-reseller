@@ -33,7 +33,7 @@ export function Shop({ products, productsLoading, productsError, onBuy, onRetry 
         <Search size={18} />
         <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search subscriptions" className="min-w-0 flex-1 bg-transparent text-[16px] text-ink outline-none placeholder:text-muted" />
       </label>
-      <div className="scroll-x -mx-5 mb-5 flex gap-2 overflow-x-auto px-5">
+      <div className="scroll-x -mx-4 sm:-mx-5 mb-5 flex gap-2 overflow-x-auto px-4 sm:px-5">
         {categories.map((c) => (
           <button key={c} onClick={() => setCategory(c)} className={`shrink-0 rounded-full px-4 py-2 text-[13px] font-semibold transition ${category === c ? "bg-ink text-bg" : "bg-fill text-ink"}`}>{c}</button>
         ))}

@@ -88,7 +88,7 @@ export default function App() {
           {sheet.type === "topup" && <TopUpSheet onCreated={(data) => { setSheet({ type: "payment", data }); void topups.reload(); }} />}
           {sheet.type === "payment" && <PaymentSheet data={sheet.data} onSubmitted={() => { setSheet({ type: "submitted" }); void topups.reload(); }} />}
           {sheet.type === "submitted" && <SuccessSheet title="Sent for review" body="Your balance updates once an administrator confirms the funds arrived." cta="Done" onDone={() => go("wallet")} />}
-          {sheet.type === "purchased" && <SuccessSheet title="Order placed" body={`Order ${sheet.id} was recorded and is waiting for review.`} cta="View orders" onDone={() => go("orders")} />}
+          {sheet.type === "purchased" && <SuccessSheet title="Order placed" body={`Order ${sheet.id} is being processed. Your access details will appear under Orders once it is delivered.`} cta="View orders" onDone={() => go("orders")} />}
           {sheet.type === "info" && <InfoSheet kind={sheet.kind} onClose={closeSheet} />}
           {sheet.type === "support" && <SupportSheet />}
         </Sheet>

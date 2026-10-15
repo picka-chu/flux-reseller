@@ -46,7 +46,7 @@ export function TopUpSheet({ onCreated }: { onCreated: (t: TopupCreated) => void
         />
       </div>
       <p className={`mb-5 text-center text-[13px] ${amount && !valid ? "text-down" : "text-muted"}`}>{amount && !valid ? "Enter $1 – $10,000" : "USD · whole dollars"}</p>
-      <div className="scroll-x -mx-5 mb-6 flex justify-center gap-2 overflow-x-auto px-5">
+      <div className="scroll-x -mx-4 sm:-mx-5 mb-6 flex justify-center gap-2 overflow-x-auto px-4 sm:px-5">
         {PRESETS.map((p) => (
           <button key={p} onClick={() => { haptic.select(); setAmount(String(p)); }} className={`shrink-0 rounded-full px-4 py-2 text-[14px] font-semibold transition ${n === p ? "bg-ink text-bg" : "bg-fill"}`}>${p}</button>
         ))}
