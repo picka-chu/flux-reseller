@@ -1,5 +1,6 @@
 """Deterministic catalogue enrichment for supplier products."""
 import re
+from urllib.parse import quote
 
 RULES = [
  ("ChatGPT", (r"chat\s*gpt", r"openai", r"\bgpt\s*[- ]?(?:4|4o|5|plus|pro)\b")),
@@ -23,48 +24,46 @@ RULES = [
  ("AI Tools", (r"\bartificial intelligence\b", r"\bai tools?\b", r"\bai bundle\b")),
 ]
 
-# Slugs are Simple Icons CDN identifiers. Match explicit product names only:
-# a category or generic description must never receive an unrelated brand logo.
-BRAND_LOGOS = [
- (r"\b(chat\s*gpt|openai|gpt[- ]?(?:4|4o|5|plus|pro))\b", "openai"),
- (r"\bgemini\b", "googlegemini"),
- (r"\bgrok\b", "x"),
- (r"\bclaude\b", "claude"),
- (r"\bkimi\b", "kimi"),
- (r"\bdeep\s*seek\b", "deepseek"),
- (r"\bqwen\b", "alibabacloud"),
- (r"\bcursor\b", "cursor"),
- (r"\brunway\b", "runway"),
- (r"\bsora\b", "openai"),
- (r"\bpika\b", "pika"),
- (r"\bveo\b", "google"),
- (r"eleven\s*labs", "elevenlabs"),
- (r"\bsuno\b", "suno"),
- (r"\badobe\b|\bphotoshop\b|\bpremiere\s*pro\b|\bacrobat\b", "adobe"),
- (r"\bautodesk\b|\bautocad\b|\brevit\b", "autodesk"),
- (r"\bfigma\b", "figma"),
- (r"\bcanva\b", "canva"),
- (r"\bcapcut\b", "capcut"),
- (r"\bnetflix\b", "netflix"),
- (r"\bspotify\b", "spotify"),
- (r"\bdiscord\b", "discord"),
- (r"\btelegram\b", "telegram"),
- (r"\bduolingo\b", "duolingo"),
- (r"\bcoursera\b", "coursera"),
- (r"\bskillshare\b", "skillshare"),
- (r"\binstagram\b", "instagram"),
- (r"\btiktok\b", "tiktok"),
- (r"\byoutube\b", "youtube"),
- (r"\blinkedin\b", "linkedin"),
- (r"\bfacebook\b", "facebook"),
- (r"\bproton\s*vpn\b", "protonvpn"),
- (r"\bnord\s*vpn\b", "nordvpn"),
- (r"\bexpress\s*vpn\b", "expressvpn"),
- (r"\bsurfshark\b", "surfshark"),
- (r"\bsteam\b", "steam"),
- (r"\bplaystation\b", "playstation"),
- (r"\bxbox\b", "xbox"),
- (r"\broblox\b", "roblox"),
+# Public image endpoints for real brand marks, keyed by explicit product name.
+# ClearLogo serves logo images from the brand's domain; no Simple Icons assets.
+BRAND_DOMAINS = [
+ (r"\b(chat\s*gpt|openai|gpt[- ]?(?:4|4o|5|plus|pro)|\bsora\b|\bcodex\b)", "openai.com"),
+ (r"\bgemini\b|\bveo\b", "google.com"),
+ (r"\bgrok\b", "x.ai"),
+ (r"\bclaude\b|\banthropic\b", "anthropic.com"),
+ (r"\bkimi\b", "kimi.com"),
+ (r"\bdeep\s*seek\b", "deepseek.com"),
+ (r"\bqwen\b", "qwen.ai"),
+ (r"\bcursor\b", "cursor.com"),
+ (r"\brunway\b", "runwayml.com"),
+ (r"\bpika\b", "pika.art"),
+ (r"eleven\s*labs", "elevenlabs.io"),
+ (r"\bsuno\b", "suno.com"),
+ (r"\badobe\b|\bphotoshop\b|\bpremiere\s*pro\b|\bacrobat\b", "adobe.com"),
+ (r"\bautodesk\b|\bautocad\b|\brevit\b", "autodesk.com"),
+ (r"\bfigma\b", "figma.com"),
+ (r"\bcanva\b", "canva.com"),
+ (r"\bcapcut\b", "capcut.com"),
+ (r"\bnetflix\b", "netflix.com"),
+ (r"\bspotify\b", "spotify.com"),
+ (r"\bdiscord\b", "discord.com"),
+ (r"\btelegram\b", "telegram.org"),
+ (r"\bduolingo\b", "duolingo.com"),
+ (r"\bcoursera\b", "coursera.org"),
+ (r"\bskillshare\b", "skillshare.com"),
+ (r"\binstagram\b", "instagram.com"),
+ (r"\btiktok\b", "tiktok.com"),
+ (r"\byoutube\b", "youtube.com"),
+ (r"\blinkedin\b", "linkedin.com"),
+ (r"\bfacebook\b", "facebook.com"),
+ (r"\bproton\s*vpn\b", "protonvpn.com"),
+ (r"\bnord\s*vpn\b", "nordvpn.com"),
+ (r"\bexpress\s*vpn\b", "expressvpn.com"),
+ (r"\bsurfshark\b", "surfshark.com"),
+ (r"\bsteam\b", "steampowered.com"),
+ (r"\bplaystation\b", "playstation.com"),
+ (r"\bxbox\b", "xbox.com"),
+ (r"\broblox\b", "roblox.com"),
 ]
 
 def classify_product(name, description=""):
@@ -76,9 +75,9 @@ def classify_product(name, description=""):
     return "AI Tools" if re.search(r"\b(ai|artificial intelligence|llm)\b", text) else "Subscriptions"
 
 def image_for_product(name, category=""):
-    """Return a brand icon URL only when the product name explicitly identifies it."""
+    """Return a public logo image URL for an explicitly recognized brand."""
     text = re.sub(r"[_/|]+", " ", f"{name or ''}").lower()
-    for pattern, slug in BRAND_LOGOS:
+    for pattern, domain in BRAND_DOMAINS:
         if re.search(pattern, text, re.IGNORECASE):
-            return f"https://cdn.simpleicons.org/{slug}"
+            return f"https://api.clearlogo.dev/logo/{quote(domain, safe='')}?size=512"
     return None
