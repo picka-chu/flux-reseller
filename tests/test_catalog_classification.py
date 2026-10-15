@@ -22,7 +22,7 @@ class CatalogClassificationTests(unittest.TestCase):
         self.assertIsNone(image_for_product("Mystery digital plan", "Subscriptions"))
 
     def test_brand_image_is_stable(self):
-        self.assertEqual(image_for_product("ChatGPT Plus", "ChatGPT"), "https://cdn.simpleicons.org/openai")
+        self.assertEqual(image_for_product("ChatGPT Plus", "ChatGPT"), "https://api.clearlogo.dev/logo/openai.com?size=512")
 
 if __name__ == "__main__":
     unittest.main()
