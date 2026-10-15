@@ -1,4 +1,4 @@
-import os, json, hmac, hashlib, time, secrets, sqlite3
+import os, json, hmac, hashlib, time, secrets, sqlite3, logging
 from urllib.parse import parse_qsl
 from contextlib import contextmanager
 from psycopg.rows import dict_row
@@ -13,6 +13,9 @@ import re
 from product_catalog import classify_product, image_for_product
 from decimal import Decimal, ROUND_CEILING
 
+logger = logging.getLogger("flux")
+APP_ENV = os.getenv("APP_ENV", "development").strip().lower()
+IS_PRODUCTION = APP_ENV == "production"
 ROOT = os.path.dirname(os.path.abspath(__file__))
 DATABASE_URL = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL", "")
 DB_PATH = os.getenv("DATABASE_PATH", os.path.join(ROOT, "flux.db"))
@@ -24,7 +27,7 @@ BRAND_NAME = os.getenv("BRAND_NAME", "FLUX")
 SUPPLIER_BASE = os.getenv("SUPPLIER_API_BASE", "https://api-geminipro.ignorelist.com/api/reseller/v1").rstrip("/")
 SUPPLIER_API_KEY = os.getenv("SUPPLIER_API_KEY", "").strip()
 CATALOG_SYNC_MINUTES = int(os.getenv("CATALOG_SYNC_MINUTES", "30"))
-WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", secrets.token_urlsafe(32))
+WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip() or ("" if IS_PRODUCTION else secrets.token_urlsafe(32))
 app = FastAPI(title="Store API", version="0.2.0")
 FRONTEND_DIST = os.path.join(ROOT, "frontend_dist")
 if os.path.isdir(os.path.join(FRONTEND_DIST, "assets")):
@@ -192,33 +195,74 @@ def admin(u=Depends(current_user)):
 
 async def telegram_api(method, payload):
     if not BOT_TOKEN:
-        return None
-    async with httpx.AsyncClient(timeout=10) as client:
+        raise RuntimeError("Telegram bot token is not configured")
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as client:
         response = await client.post(f"https://api.telegram.org/bot{BOT_TOKEN}/{method}", json=payload)
         response.raise_for_status()
         result = response.json()
         if not result.get("ok"):
-            raise RuntimeError("Telegram API request failed")
+            # Never include the request URL in errors: it contains the bot token.
+            raise RuntimeError(f"Telegram API rejected {method}")
         return result.get("result")
+
+
+def validate_production_config():
+    """Fail closed instead of silently running with ephemeral storage or an unconfigured bot."""
+    missing = []
+    if not BOT_TOKEN:
+        missing.append("TELEGRAM_BOT_TOKEN")
+    if not WEBHOOK_SECRET:
+        missing.append("TELEGRAM_WEBHOOK_SECRET")
+    elif not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", WEBHOOK_SECRET):
+        missing.append("TELEGRAM_WEBHOOK_SECRET (use Telegram-supported characters)")
+    if not ADMIN_IDS:
+        missing.append("ADMIN_TELEGRAM_IDS")
+    if not DATABASE_URL:
+        missing.append("SUPABASE_DB_URL or DATABASE_URL (PostgreSQL required in production)")
+    if not WEBAPP_URL.startswith("https://"):
+        missing.append("FLUX_WEBAPP_URL (or valid RENDER_EXTERNAL_URL)")
+    if not SUPPLIER_API_KEY:
+        missing.append("SUPPLIER_API_KEY")
+    if os.getenv("FLUX_DEMO_MODE", "false").strip().lower() == "true":
+        missing.append("FLUX_DEMO_MODE=false")
+    if missing:
+        raise RuntimeError("Production configuration is incomplete: " + ", ".join(missing))
+
 
 @app.on_event("startup")
 async def configure_telegram_webhook():
-    # Render exposes RENDER_EXTERNAL_URL automatically. Setting a webhook enables /start replies.
-    if BOT_TOKEN and WEBAPP_URL.startswith("https://"):
-        try:
-            await telegram_api("setMyCommands", {"commands": [
-                {"command": "start", "description": "Open the store"},
-                {"command": "balance", "description": "Check your wallet balance"},
-                {"command": "orders", "description": "View your recent orders"},
-                {"command": "help", "description": "Get help and safety guidance"}
-            ]})
-            await telegram_api("setWebhook", {
-                "url": WEBAPP_URL + "/telegram/webhook/" + WEBHOOK_SECRET,
-                "secret_token": WEBHOOK_SECRET,
-                "allowed_updates": ["message", "callback_query"]
-            })
-        except Exception as exc:
-            print(f"Telegram webhook setup failed: {type(exc).__name__}: {exc}")
+    # Render exposes RENDER_EXTERNAL_URL automatically. Validate production before serving traffic.
+    if IS_PRODUCTION:
+        validate_production_config()
+    if not BOT_TOKEN or not WEBAPP_URL.startswith("https://"):
+        logger.warning("Telegram webhook not configured: bot token or public HTTPS URL is missing")
+        return
+    if not WEBHOOK_SECRET:
+        raise RuntimeError("TELEGRAM_WEBHOOK_SECRET must be configured before registering the webhook")
+    target_url = WEBAPP_URL + "/telegram/webhook/" + WEBHOOK_SECRET
+    try:
+        await telegram_api("setMyCommands", {"commands": [
+            {"command": "start", "description": "Open the store"},
+            {"command": "balance", "description": "Check your wallet balance"},
+            {"command": "orders", "description": "View your recent orders"},
+            {"command": "help", "description": "Get help and safety guidance"}
+        ]})
+        await telegram_api("setWebhook", {
+            "url": target_url,
+            "secret_token": WEBHOOK_SECRET,
+            "allowed_updates": ["message", "callback_query"]
+        })
+        info = await telegram_api("getWebhookInfo", {})
+        if not info or info.get("url") != target_url:
+            raise RuntimeError("Telegram did not confirm the configured webhook URL")
+        if info.get("last_error_message"):
+            logger.warning("Telegram reports a webhook delivery error: %s", info["last_error_message"])
+        logger.info("Telegram webhook registered and verified; pending updates=%s", info.get("pending_update_count", 0))
+    except Exception as exc:
+        # Exception text can contain credentials or token-bearing request URLs.
+        logger.error("Telegram webhook setup failed (%s)", type(exc).__name__)
+        if IS_PRODUCTION:
+            raise RuntimeError("Production startup failed: Telegram webhook could not be registered") from None
 
 @app.post("/telegram/webhook/{secret}")
 async def telegram_webhook(secret: str, update: dict, request: Request):
@@ -420,7 +464,7 @@ def admin_console(rest: str = ""):
     # The React app switches to the operations console when the path starts with /admin.
     # Every admin API call is still protected server-side by ADMIN_TELEGRAM_IDS.
     return spa_index()
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 def health(): return {"status":"ok","service":"flux-api"}
 @app.get("/api/config")
 def config(): return {"brand":BRAND_NAME,"demo_mode":os.getenv("FLUX_DEMO_MODE","false").lower()=="true","payment_ttl_minutes":TTL,"currency":"USD"}

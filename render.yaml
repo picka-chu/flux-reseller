@@ -2,10 +2,14 @@ services:
   - type: web
     name: flux-reseller
     runtime: python
-    plan: free  # NOTE: free plans sleep when idle, which stops sync and alert loops. Use a paid plan for production (see docs/OPERATIONS.md).
-    buildCommand: npm install && npm run build && pip install -r requirements.txt
+    plan: free  # Free instances sleep when idle; upgrade for always-on production operation.
+    buildCommand: npm ci && npm run build && pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
+      - key: APP_ENV
+        value: production
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: ADMIN_TELEGRAM_IDS
