@@ -81,6 +81,24 @@ def test_low_supplier_balance_raises_an_issue(monkeypatch, client, supplier):
     assert sent and "Operations check" in sent[0]["text"]
 
 
+def test_health_supports_get_and_head(client):
+    assert client.get("/health").status_code == 200
+    assert client.head("/health").status_code == 200
+
+
+def test_production_config_fails_closed_when_critical_values_are_missing(monkeypatch):
+    monkeypatch.setattr(main, "BOT_TOKEN", "")
+    monkeypatch.setattr(main, "WEBHOOK_SECRET", "")
+    monkeypatch.setattr(main, "ADMIN_IDS", set())
+    monkeypatch.setattr(main, "DATABASE_URL", "")
+    monkeypatch.setattr(main, "WEBAPP_URL", "")
+    monkeypatch.setattr(main, "SUPPLIER_API_KEY", "")
+    monkeypatch.setenv("FLUX_DEMO_MODE", "true")
+    import pytest
+    with pytest.raises(RuntimeError, match="TELEGRAM_BOT_TOKEN"):
+        main.validate_production_config()
+
+
 def test_admin_ops_endpoint_is_admin_only(client):
     assert client.get("/api/admin/ops").status_code == 200   # demo user 100000001 is an admin in tests
     main.ADMIN_IDS.discard(100000001)

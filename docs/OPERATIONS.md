@@ -32,6 +32,8 @@ afterwards.
 
 ### Health endpoint
 
+`GET /health` and `HEAD /health` are liveness checks for Render and uptime monitors. They confirm the web process is responding, not that PostgreSQL, Telegram, or the supplier is healthy. Use `/api/admin/ops` for authenticated operational diagnostics.
+
 Admins can see the current state at `GET /api/admin/ops` (admin sign-in required). It returns:
 
 - `needs_review`, `needs_review_over_limit`, `flagged_no_supplier_record`
@@ -43,9 +45,7 @@ If `alerts_enabled` is `false`, **no alerts are being sent**. Fix that first.
 
 ### Free hosting warning
 
-`render.yaml` deploys on Render's free plan. Free services go to sleep when idle, and the sync,
-reconciliation and alert loops stop while the service sleeps. Use a paid instance for production, or
-accept that orders may wait until the next visit. This is a cost decision for the owner.
+`render.yaml` currently uses Render's free plan to keep hosting costs low. Free services sleep when idle, so catalogue sync, reconciliation, and alert loops pause; webhook replies can also be delayed by cold starts. For reliable real-money production, use an always-on paid instance or an external scheduled worker and accept that the free plan provides no always-on guarantee. The deployment now fails startup if required production secrets, PostgreSQL, admin IDs, or supplier configuration are missing.
 
 ## 2. Backups
 
