@@ -106,6 +106,7 @@ def migrate_and_seed():
         ensure_column(c, "orders", "cost_cents", "INTEGER")
         ensure_column(c, "orders", "supplier_product_id", "INTEGER")
         ensure_column(c, "orders", "supplier_order_code", "TEXT")
+        ensure_column(c, "orders", "review_note", "TEXT")
         ensure_column(c, "catalog", "image_url", "TEXT")
         ensure_column(c, "catalog", "supplier_image", "TEXT")
         ensure_column(c, "catalog", "added_at", "TEXT")
@@ -506,8 +507,20 @@ async def create_order(b:OrderCreate,u=Depends(current_user)):
             reason = REFUND_REASONS.get(err.code, "The order could not be placed.")
             refund_order(oid, u["id"], sell, reason + " Your wallet has been refunded.")
             raise HTTPException(400, reason + " Your wallet has been refunded.")
-        mark_order(oid, "needs_review", "We're confirming this order with the supplier. You'll see the result here shortly.")
-        return {"id": oid, "status": "needs_review", "message": "We're confirming this order with the supplier."}
+        # Unclear: do not guess. Park it, then check the supplier's own records.
+        mark_order(oid, "needs_review", CUSTOMER_PENDING_NOTE)
+        if err.code == "supplier_purchase_failed":
+            # The supplier said the purchase failed. First look for a record that says otherwise;
+            # if there is none, the failure stands and the wallet is refunded now.
+            await reconcile_unclear_orders(only_id=oid)
+            with db() as c:
+                if c.execute("SELECT status FROM orders WHERE id=?", (oid,)).fetchone()["status"] == "needs_review":
+                    refund_order(oid, u["id"], sell, SUPPLIER_FAILED_NOTE)
+        with db() as c:
+            st = c.execute("SELECT status FROM orders WHERE id=?", (oid,)).fetchone()["status"]
+        if st == "refunded":
+            raise HTTPException(400, SUPPLIER_FAILED_NOTE)
+        return {"id": oid, "status": st, "message": "Delivered." if st == "delivered" else CUSTOMER_PENDING_NOTE}
     order = resp.get("order") or {}
     status = "delivered" if order.get("status") == "completed" else "processing"
     value = order.get("value")
@@ -564,12 +577,15 @@ def admin_decide_order(oid: str, b: AdminOrderDecision, u=Depends(admin)):
         if previous == "delivered" and b.status != "delivered":
             raise HTTPException(409, "Delivered orders cannot be changed or refunded here")
         if b.status == "refunded":
-            if previous not in ("pending_review", "processing", "rejected", "needs_review"):
+            claimed = c.execute("UPDATE orders SET status='refunded', delivery_note=COALESCE(?,delivery_note) WHERE id=? AND status IN ('pending_review','processing','rejected','needs_review')",
+                                (b.note, oid))
+            if claimed.rowcount != 1:
                 raise HTTPException(409, "This order cannot be refunded from its current state")
             c.execute("UPDATE users SET balance_cents=balance_cents+? WHERE telegram_id=?",
                       (row["price_cents"], row["telegram_id"]))
             c.execute("INSERT INTO ledger(id,telegram_id,delta_cents,reason,reference,created_at) VALUES(?,?,?,?,?,?)",
                       ("LG-" + secrets.token_hex(5), row["telegram_id"], row["price_cents"], "order_refund", "REFUND-" + oid, now))
+            return {"id": oid, "previous_status": previous, "status": "refunded"}
         c.execute("UPDATE orders SET status=?,delivery_note=COALESCE(?,delivery_note) WHERE id=?",
                   (b.status, b.note, oid))
     return {"id": oid, "previous_status": previous, "status": b.status}
@@ -854,32 +870,132 @@ async def sync_catalog():
     return {"synced": len(items), "added": added, "removed": len(gone)}
 
 def refund_order(oid, telegram_id, cents, reason):
+    """Refund exactly once. The status change and the credit share one transaction, and the
+    UPDATE only matches while the order is still refundable, so a retry can never pay twice.
+    Returns False if the order was already refunded or can no longer be refunded."""
     now = datetime.now(timezone.utc).isoformat()
     with db() as c:
+        claimed = c.execute("UPDATE orders SET status='refunded', delivery_note=? WHERE id=? AND status IN ('pending_review','processing','needs_review')",
+                            (reason, oid))
+        if claimed.rowcount != 1:
+            return False
         c.execute("UPDATE users SET balance_cents=balance_cents+? WHERE telegram_id=?", (cents, telegram_id))
         c.execute("INSERT INTO ledger(id,telegram_id,delta_cents,reason,reference,created_at) VALUES(?,?,?,?,?,?)",
                   ("LG-" + secrets.token_hex(5), telegram_id, cents, "order_refund", "REFUND-" + oid, now))
-        c.execute("UPDATE orders SET status='refunded', delivery_note=? WHERE id=?", (reason, oid))
+    return True
 
 def mark_order(oid, status, note=None):
     with db() as c:
         c.execute("UPDATE orders SET status=?, delivery_note=COALESCE(?,delivery_note) WHERE id=?", (status, note, oid))
 
+# ── Unclear supplier results ────────────────────────────────────────────────
+# These errors do not prove whether the supplier charged us. We never refund or deliver on
+# guesswork: we look for the order in the supplier's own list and decide from that.
+UNCLEAR_CODES = {"supplier_purchase_pending", "transaction_error", "supplier_purchase_failed"}
+FAILED_STATUSES = {"failed", "cancelled", "canceled", "refunded", "error", "rejected", "declined"}
+UNCLEAR_GRACE = timedelta(minutes=15)   # how long to wait before saying "supplier has no record"
+MATCH_WINDOW = timedelta(minutes=2)     # supplier orders created this close to our attempt are candidates
+CUSTOMER_PENDING_NOTE = "We're confirming this order with the supplier. You'll see the result here shortly."
+SUPPLIER_FAILED_NOTE = "The supplier could not complete this order. Your wallet has been refunded."
+
+def parse_ts(value):
+    try:
+        d = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+async def reconcile_unclear_orders(only_id=None):
+    """Resolve needs_review orders by matching them to the supplier's own order list.
+    - Exactly one unclaimed supplier order for the same product, created just after our attempt:
+      adopt it. Completed or still processing -> processing (sync delivers it); failed -> refund.
+    - Several candidates, or one candidate claimed by two of our orders: leave for an admin.
+    - No candidate after the grace period: the supplier has no record, so flag it for the admin
+      to confirm before refunding. Nothing is refunded automatically here."""
+    with db() as c:
+        sql = "SELECT id,telegram_id,supplier_product_id,price_cents,created_at FROM orders WHERE status='needs_review' AND supplier_product_id IS NOT NULL"
+        params = ()
+        if only_id:
+            sql += " AND id=?"; params = (only_id,)
+        rows = [dict(r) for r in c.execute(sql, params).fetchall()]
+        linked = {r["supplier_order_code"] for r in c.execute("SELECT supplier_order_code FROM orders WHERE supplier_order_code IS NOT NULL").fetchall()}
+    report = {"checked": len(rows), "delivering": 0, "refunded": 0, "waiting": 0, "flagged": 0, "ambiguous": 0}
+    if not rows:
+        return report
+    try:
+        remote = (await supplier_request("GET", "/orders")).get("orders") or []
+    except SupplierError:
+        report["supplier"] = "unreachable"
+        return report
+    remote = [o for o in remote if o.get("orderCode")]
+    now = datetime.now(timezone.utc)
+    candidates = {}
+    for r in rows:
+        t0 = parse_ts(r["created_at"]) or now
+        candidates[r["id"]] = [o for o in remote
+                               if o["orderCode"] not in linked
+                               and o.get("productId") == r["supplier_product_id"]
+                               and int(o.get("quantity") or 1) == 1
+                               and (parse_ts(o.get("createdAt")) or t0) >= t0 - MATCH_WINDOW]
+    usage = {}
+    for found in candidates.values():
+        for o in found:
+            usage[o["orderCode"]] = usage.get(o["orderCode"], 0) + 1
+    for r in rows:
+        found = candidates[r["id"]]
+        if len(found) > 1 or any(usage[o["orderCode"]] > 1 for o in found):
+            report["ambiguous"] += 1
+            continue
+        if found:
+            o = found[0]
+            if str(o.get("status") or "").lower() in FAILED_STATUSES:
+                if refund_order(r["id"], r["telegram_id"], r["price_cents"], SUPPLIER_FAILED_NOTE):
+                    report["refunded"] += 1
+            else:
+                with db() as c:
+                    c.execute("UPDATE orders SET status='processing', supplier_order_code=?, review_note=NULL WHERE id=? AND status='needs_review'",
+                              (o["orderCode"], r["id"]))
+                report["delivering"] += 1
+            continue
+        t0 = parse_ts(r["created_at"]) or now
+        if now - t0 >= UNCLEAR_GRACE:
+            with db() as c:
+                c.execute("UPDATE orders SET review_note=? WHERE id=?",
+                          ("Supplier has no record of this order after 15 minutes. Check the supplier panel, then refund or mark delivered.", r["id"]))
+            report["flagged"] += 1
+        else:
+            report["waiting"] += 1
+    return report
+
 async def sync_supplier_orders():
     with db() as c:
-        rows = c.execute("SELECT id, supplier_order_code FROM orders WHERE supplier_order_code IS NOT NULL AND status IN ('processing','needs_review')").fetchall()
+        rows = [dict(r) for r in c.execute("SELECT id, telegram_id, price_cents, supplier_order_code FROM orders WHERE supplier_order_code IS NOT NULL AND status='processing'").fetchall()]
     updated = 0
     for r in rows:
         try:
             o = (await supplier_request("GET", f"/orders/{r['supplier_order_code']}")).get("order") or {}
         except SupplierError:
             continue
-        if o.get("status") == "completed":
+        st = str(o.get("status") or "").lower()
+        if st == "completed":
             value = o.get("value")
             note = None if value in (None, "", "DELIVERED_DIGITAL_PRODUCT") else str(value)
             mark_order(r["id"], "delivered", note)
             updated += 1
+        elif st in FAILED_STATUSES:
+            if refund_order(r["id"], r["telegram_id"], r["price_cents"], SUPPLIER_FAILED_NOTE):
+                updated += 1
     return updated
+
+async def _reconcile_loop():
+    while True:
+        try:
+            if SUPPLIER_API_KEY:
+                await reconcile_unclear_orders()
+                await sync_supplier_orders()
+        except Exception as exc:
+            print(f"Order reconciliation failed: {type(exc).__name__}: {exc}")
+        await asyncio.sleep(120)
 
 async def _catalog_loop():
     while True:
@@ -893,6 +1009,7 @@ async def _catalog_loop():
 @app.on_event("startup")
 async def start_catalog_sync():
     asyncio.create_task(_catalog_loop())
+    asyncio.create_task(_reconcile_loop())
 
 # ── Admin: catalogue, pricing and settings ─────────────────────────────────
 @app.get("/api/admin/catalog")

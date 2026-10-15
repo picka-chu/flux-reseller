@@ -59,23 +59,24 @@ export function ProductArt({ product, className = "", large = false }: { product
 export function PlanCard({ product, onClick }: { product: Product; onClick: () => void }) {
   const per = periodSuffix(product.period);
   const [whole, cents] = product.price.toFixed(2).split(".");
+  const soldOut = !product.in_stock;
   return (
-    <button onClick={onClick} className="flex w-full flex-col overflow-hidden rounded-[18px] border border-line bg-surface text-left transition active:scale-[0.98]">
+    <button onClick={onClick} className={`flex w-full min-w-0 flex-col overflow-hidden rounded-[18px] border border-line bg-surface text-left transition active:scale-[0.98] ${soldOut ? "opacity-80" : ""}`}>
       <div className="relative">
         <ProductArt product={product} className="aspect-square w-full" />
-        {!product.in_stock
-          ? <span className="absolute inset-0 grid place-items-center bg-bg/70 text-[13px] font-semibold">Sold out</span>
+        {soldOut
+          ? <span className="absolute left-2.5 top-2.5 rounded-full bg-ink px-2 py-0.5 text-[11px] font-semibold text-bg">Sold out</span>
           : product.tag && <span className="absolute left-2.5 top-2.5 rounded-full bg-surface/95 px-2 py-0.5 text-[11px] font-semibold shadow-sm">{product.tag}</span>}
       </div>
       <div className="flex flex-1 flex-col p-3">
-        <p className="line-clamp-2 min-h-[2.6em] text-[14px] font-semibold leading-snug">{product.name}</p>
+        <p className="line-clamp-2 min-h-[2.6em] break-words text-[14px] font-semibold leading-snug">{product.name}</p>
         <p className="mt-0.5 truncate text-[12px] text-muted">{product.category}</p>
         <div className="mt-2 flex items-center justify-between gap-2">
-          <p className="min-w-0 truncate">
+          <p className="min-w-0 whitespace-nowrap">
             <b className="num text-[16px] font-bold">${whole}.{cents}</b>
             <span className="text-[11px] text-muted">{per}</span>
           </p>
-          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-brand text-white dark:text-[#0a0b0d]">
+          <span aria-hidden="true" className={`grid h-8 w-8 shrink-0 place-items-center rounded-full ${soldOut ? "bg-fill text-muted" : "bg-brand text-on-brand"}`}>
             <Plus size={17} strokeWidth={2.4} />
           </span>
         </div>
