@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 import httpx
 import asyncio
 import re
+from product_catalog import classify_product, image_for_product
 from decimal import Decimal, ROUND_CEILING
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -849,16 +850,25 @@ async def sync_catalog():
             seen.add(pid)
             if pid not in existing: added += 1
             # New products are listed automatically at the default margin. Admin overrides are never overwritten.
-            c.execute("""INSERT INTO catalog(id,name,description,supplier_price,currency,stock,in_stock,synced_at)
-                VALUES(?,?,?,?,?,?,?,?)
+            product_name = str(it.get("name") or it.get("title") or f"Product {pid}")
+            product_description = str(it.get("description") or "")
+            auto_category = classify_product(product_name, product_description)
+            auto_image = image_for_product(product_name, auto_category)
+            c.execute("""INSERT INTO catalog(id,name,description,supplier_price,currency,stock,in_stock,synced_at,category)
+                VALUES(?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(id) DO UPDATE SET name=excluded.name, description=excluded.description,
                   supplier_price=excluded.supplier_price, currency=excluded.currency, stock=excluded.stock,
                   in_stock=excluded.in_stock, synced_at=excluded.synced_at, removed=0""",
-                (pid, str(it.get("name") or it.get("title") or f"Product {pid}"), str(it.get("description") or ""),
+                (pid, product_name, product_description,
                  str(it.get("price") or "0"), str(it.get("currency") or "USD"), int(it.get("stock") or 0),
-                 1 if it.get("inStock") else 0, now))
+                 1 if it.get("inStock") else 0, now, auto_category))
             img = next((str(it[k]) for k in ("image", "imageUrl", "thumbnail") if str(it.get(k) or "").startswith("https://")), None)
             c.execute("UPDATE catalog SET supplier_image=? WHERE id=?", (img, pid))
+            # Backfill only the legacy default category; preserve admin-selected categories.
+            c.execute("UPDATE catalog SET category=? WHERE id=? AND category='Subscriptions'", (auto_category, pid))
+            # Keep manually assigned images intact; fill only an empty image_url.
+            if auto_image:
+                c.execute("UPDATE catalog SET image_url=? WHERE id=? AND (image_url IS NULL OR image_url='')", (auto_image, pid))
             if pid not in existing:
                 c.execute("UPDATE catalog SET added_at=? WHERE id=?", (now, pid))
             elif prev_stock.get(pid) == 0 and (1 if it.get("inStock") else 0) == 1:
