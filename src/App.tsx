@@ -33,6 +33,7 @@ export default function App() {
   const [tab, setTab] = useState<Tab>("home");
   const [sheet, setSheet] = useState<SheetState | null>(null);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [shopCategory, setShopCategory] = useState("All");
 
   const me = useResource(() => request<Me>("/api/me"));
   const products = useResource(() => request<Product[]>("/api/products"));
@@ -54,6 +55,13 @@ export default function App() {
 
   const openTopup = () => setSheet({ type: "topup" });
   const openHelp = () => setSheet({ type: "support" });
+  const openShop = useCallback((category = "All") => {
+    setShopCategory(category);
+    setTab("shop");
+    setSheet(null);
+    setSelectedProduct(null);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
 
   return (
     <ToastProvider>
@@ -66,13 +74,15 @@ export default function App() {
           {tab === "home" && (
             <Home
               me={me.data} meLoading={me.loading}
+              products={products.data} productsLoading={products.loading}
               feed={feed.data} feedLoading={feed.loading} feedError={feed.error}
               onBuy={setSelectedProduct}
-              onTopup={openTopup} onShop={() => go("shop")} onHelp={openHelp} onRetry={feed.reload}
+              onTopup={openTopup} onShop={openShop} onHelp={openHelp} onRetry={() => { void feed.reload(); void products.reload(); }}
             />
           )}
           {tab === "shop" && (
             <Shop
+              key={shopCategory} initialCategory={shopCategory}
               products={products.data} productsLoading={products.loading} productsError={products.error}
               onBuy={setSelectedProduct} onRetry={products.reload}
             />
