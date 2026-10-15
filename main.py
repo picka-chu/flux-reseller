@@ -47,6 +47,9 @@ class DatabaseAdapter:
     def executemany(self, query, params_seq):
         if self.postgres:
             query = query.replace("?", "%s")
+            with self.connection.cursor() as cursor:
+                cursor.executemany(query, params_seq)
+                return cursor.rowcount
         return self.connection.executemany(query, params_seq)
 
     def executescript(self, script):
