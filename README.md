@@ -17,7 +17,6 @@ at `/admin`.
 - [Deploy on Render](#deploy-on-render)
 - [Testing](#testing)
 - [Operations](#operations)
-- [Legal documents](#legal-documents)
 - [Going live](#going-live)
 
 ## Features
@@ -76,7 +75,6 @@ scripts/                   backup.sh, restore_drill.sh
 docs/
   OPERATIONS.md            alerts, health checks, backups
   RUNBOOK.md               what to do when something needs attention
-  legal/                   terms, refund policy, privacy policy, supplier disclosure
 .github/workflows/ci.yml   typecheck, build, backend tests on every pull request
 render.yaml                Render deployment blueprint
 ```
@@ -131,7 +129,7 @@ Set these as environment variables (Render: *Environment*; locally: `.env`).
 | `FLUX_DEMO_MODE` | No | `true` only for local development. Must be `false` in production. |
 | `BRAND_NAME` | No | Name shown in metadata and the bot. Set to `FLUX`. |
 
-Brand text in the app and legal pages comes from `src/lib/brand.ts` and `src/lib/legal.ts`.
+Brand text in the app comes from `src/lib/brand.ts`.
 
 ## Set up Telegram
 
@@ -194,12 +192,6 @@ at 320px and 390px width in a phone-sized browser.
 Start every day with the check in the runbook. Orders in **Needs review** need a human when they are
 flagged.
 
-## Legal documents
-
-Customer-facing terms are in [docs/legal](docs/legal/README.md): Terms of Service, Refund Policy,
-Privacy Policy, and Supplier Disclosure. They are drafts. Fill in the placeholders in `src/lib/legal.ts`
-and have a lawyer review them before launch.
-
 ## Going live
 
 Do not take real customer money until every item below is done.
@@ -210,7 +202,7 @@ Do not take real customer money until every item below is done.
 - [ ] `FLUX_DEMO_MODE` is `false` in Render; `ADMIN_TELEGRAM_IDS` lists only the real admins.
 - [ ] `/api/admin/ops` shows `alerts_enabled: true`, and an alert reached every admin.
 - [ ] Nightly backup running, and one restore drill passed.
-- [ ] Legal placeholders filled and the drafts reviewed by a lawyer.
+- [ ] Terms, refund rules and privacy notice reviewed by a lawyer for each market you sell in.
 - [ ] Every token pasted into chat or logs has been revoked and replaced.
 - [ ] The admin team has read the [runbook](docs/RUNBOOK.md).
 

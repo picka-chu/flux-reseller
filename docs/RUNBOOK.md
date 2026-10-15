@@ -100,7 +100,7 @@ processed it, and a refund then costs you twice.
 ## Playbook 8: Customer refund request
 
 1. Ask for the **order ID**. Check it in the admin console.
-2. Apply the [Refund Policy](legal/refund-policy.md) exactly. Note the decision.
+2. Apply the refund rules you have published to customers. Note the decision.
 3. If refunding: use **Refund** with a note. Do not credit the wallet by hand; manual balance edits
    bypass the ledger.
 4. Reply in support with the outcome and the timescale.

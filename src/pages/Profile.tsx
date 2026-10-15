@@ -1,4 +1,4 @@
-import { BadgeCheck, FileText, MessageCircle, Package, ShieldCheck, Wallet } from "lucide-react";
+import { BadgeCheck, MessageCircle, Package, ShieldCheck, Wallet } from "lucide-react";
 import { Avatar } from "../components/Chrome";
 import { MenuRow } from "../components/Blocks";
 import { Segmented, Skeleton } from "../components/ui";
@@ -7,9 +7,9 @@ import { inTelegram, tg } from "../lib/telegram";
 import type { ThemeMode } from "../hooks/useTheme";
 import type { Me } from "../lib/types";
 
-interface Props { me: Me | null; meLoading?: boolean; mode: ThemeMode; onMode: (m: ThemeMode) => void; go: (t: "wallet" | "orders") => void; onHelp: () => void; onSafety: () => void; onLegal: () => void }
+interface Props { me: Me | null; meLoading?: boolean; mode: ThemeMode; onMode: (m: ThemeMode) => void; go: (t: "wallet" | "orders") => void; onHelp: () => void; onSafety: () => void }
 
-export function Profile({ me, meLoading = false, mode, onMode, go, onHelp, onSafety, onLegal }: Props) {
+export function Profile({ me, meLoading = false, mode, onMode, go, onHelp, onSafety }: Props) {
   const name = me?.first_name || tg?.initDataUnsafe?.user?.first_name || "Welcome";
   const handle = me?.username || tg?.initDataUnsafe?.user?.username;
   return (
@@ -36,7 +36,6 @@ export function Profile({ me, meLoading = false, mode, onMode, go, onHelp, onSaf
       <div className="card divide-y divide-line overflow-hidden">
         <MenuRow icon={MessageCircle} label="Help & support" hint="Questions about orders or payments" onClick={onHelp} />
         <MenuRow icon={ShieldCheck} label="Safety & payments" hint="How deposits are reviewed" onClick={onSafety} />
-        <MenuRow icon={FileText} label="Terms and policies" hint="Terms, refunds, privacy and supplier information" onClick={onLegal} />
       </div>
       <p className="py-8 text-center text-[12px] text-muted">Subscriptions, simplified</p>
     </div>
