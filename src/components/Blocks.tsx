@@ -46,6 +46,10 @@ const BRAND_LOGOS: Record<string, string> = {
   elevenlabs: "elevenlabs", qwen: "qwen", deepseek: "deepseek", cursor: "cursor",
   "cursor ai": "cursor", adobe: "adobe", autodesk: "autodesk",
   office: "microsoftoffice", microsoft: "microsoft", discord: "discord",
+  netflix: "netflix", spotify: "spotify", canva: "canva", figma: "figma",
+  capcut: "capcut", runway: "runway", pika: "pika", suno: "suno",
+  instagram: "instagram", tiktok: "tiktok", youtube: "youtube", facebook: "facebook",
+  nordvpn: "nordvpn", protonvpn: "protonvpn", expressvpn: "expressvpn", surfshark: "surfshark",
   linkedin: "linkedin", social: "linkedin",
 };
 
@@ -80,13 +84,13 @@ export function CategoryMark({ name, size = 16 }: { name: string; size?: number 
   return <Icon size={size} aria-hidden="true" className="shrink-0" />;
 }
 
-/** Product artwork prefers a merchant-uploaded image, then a matching brand logo, then a category symbol. */
+/** Product artwork prefers a recognizable brand mark over supplier artwork, which may be generic or mismatched. */
 export function ProductArt({ product, className = "", large = false }: { product: Pick<Product, "accent" | "image_url" | "sticker" | "name" | "category">; className?: string; large?: boolean }) {
   const [failedSources, setFailedSources] = useState<string[]>([]);
+  const brandSlug = logoSlugFor(product.name);
   const sources = [
+    brandSlug ? `https://cdn.simpleicons.org/${brandSlug}` : undefined,
     product.image_url || undefined,
-    logoSlugFor(product.name) ? `https://cdn.simpleicons.org/${logoSlugFor(product.name)}` : undefined,
-    logoSlugFor(product.category) ? `https://cdn.simpleicons.org/${logoSlugFor(product.category)}` : undefined,
   ].filter((source, index, all): source is string => Boolean(source) && all.indexOf(source) === index);
   const imageSource = sources.find((source) => !failedSources.includes(source));
   const CategoryIcon = CATEGORY_ICONS[product.category] ?? ShoppingBag;
@@ -96,7 +100,7 @@ export function ProductArt({ product, className = "", large = false }: { product
       {imageSource ? (
         <img src={imageSource} alt={product.name} loading="lazy"
           onError={() => setFailedSources((failed) => failed.includes(imageSource) ? failed : [...failed, imageSource])}
-          className={`relative z-[1] object-contain ${product.image_url === imageSource ? "h-full w-full" : "h-[58%] w-[58%]"}`} />
+          className={`relative z-[1] object-contain ${product.image_url === imageSource && !brandSlug ? "h-full w-full" : "h-[58%] w-[58%]"}`} />
       ) : (
         <span aria-hidden="true" className={`grid place-items-center rounded-[24%] bg-surface/80 text-brand ring-1 ring-line/70 ${large ? "h-28 w-28" : "h-20 w-20"}`}>
           <CategoryIcon size={large ? 56 : 40} strokeWidth={1.7} />
