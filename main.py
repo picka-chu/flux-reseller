@@ -1,9 +1,9 @@
-import os, json, hmac, hashlib, time, secrets, sqlite3, logging
+import os, json, hmac, hashlib, time, secrets, sqlite3, logging, threading
 from urllib.parse import parse_qsl
 from contextlib import contextmanager
 from psycopg.rows import dict_row
 from datetime import datetime, timezone, timedelta
-from fastapi import FastAPI, HTTPException, Header, Depends, Request
+from fastapi import FastAPI, HTTPException, Header, Depends, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -44,6 +44,11 @@ class DatabaseAdapter:
             query = query.replace("?", "%s")
         return self.connection.execute(query, params)
 
+    def executemany(self, query, params_seq):
+        if self.postgres:
+            query = query.replace("?", "%s")
+        return self.connection.executemany(query, params_seq)
+
     def executescript(self, script):
         if not self.postgres:
             return self.connection.executescript(script)
@@ -51,16 +56,46 @@ class DatabaseAdapter:
             if statement.strip():
                 self.execute(statement)
 
+_pg_pool = None
+_pg_pool_lock = threading.Lock()
+
+
+def _get_pg_pool():
+    """Reuse PostgreSQL connections instead of paying a network handshake per query."""
+    global _pg_pool
+    if _pg_pool is None:
+        with _pg_pool_lock:
+            if _pg_pool is None:
+                from psycopg_pool import ConnectionPool
+                _pg_pool = ConnectionPool(
+                    conninfo=DATABASE_URL,
+                    min_size=1,
+                    max_size=max(2, int(os.getenv("DB_POOL_MAX_SIZE", "8"))),
+                    timeout=5,
+                    kwargs={"row_factory": dict_row, "connect_timeout": 5},
+                    open=False,
+                )
+                _pg_pool.open(wait=True)
+    return _pg_pool
+
+
 @contextmanager
 def db():
     if DATABASE_URL:
-        import psycopg
-        conn = psycopg.connect(DATABASE_URL, row_factory=dict_row, connect_timeout=10)
-        c = DatabaseAdapter(conn, postgres=True)
-    else:
-        conn = sqlite3.connect(DB_PATH, timeout=15)
-        conn.row_factory = sqlite3.Row
-        c = DatabaseAdapter(conn, postgres=False)
+        pool = _get_pg_pool()
+        with pool.connection() as conn:
+            c = DatabaseAdapter(conn, postgres=True)
+            try:
+                yield c
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return
+
+    conn = sqlite3.connect(DB_PATH, timeout=15)
+    conn.row_factory = sqlite3.Row
+    c = DatabaseAdapter(conn, postgres=False)
     try:
         yield c
         conn.commit()
@@ -118,6 +153,16 @@ def migrate_and_seed():
         ensure_column(c, "catalog", "added_at", "TEXT")
         ensure_column(c, "catalog", "restocked_at", "TEXT")
         ensure_column(c, "catalog", "featured", "INTEGER NOT NULL DEFAULT 0")
+        c.executescript("""        CREATE INDEX IF NOT EXISTS idx_catalog_public ON catalog(enabled, removed, category, name);
+        CREATE INDEX IF NOT EXISTS idx_catalog_featured ON catalog(enabled, removed, in_stock, featured);
+        CREATE INDEX IF NOT EXISTS idx_catalog_restocked ON catalog(enabled, removed, in_stock, restocked_at);
+        CREATE INDEX IF NOT EXISTS idx_catalog_added ON catalog(enabled, removed, in_stock, added_at);
+        CREATE INDEX IF NOT EXISTS idx_orders_user_created ON orders(telegram_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_orders_status_created ON orders(status, created_at);
+        CREATE INDEX IF NOT EXISTS idx_orders_supplier_status ON orders(supplier_order_code, status);
+        CREATE INDEX IF NOT EXISTS idx_topups_user_created ON topups(telegram_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_support_messages_thread_created ON support_messages(thread_id, created_at);
+""")
         for k, v in DEFAULT_SETTINGS.items():
             c.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO NOTHING", (k, v))
 
@@ -193,17 +238,58 @@ def admin(u=Depends(current_user)):
     if u["id"] not in ADMIN_IDS: raise HTTPException(403,"Admin access required")
     return u
 
+_telegram_http_client: httpx.AsyncClient | None = None
+_supplier_http_client: httpx.AsyncClient | None = None
+_background_tasks: list[asyncio.Task] = []
+
+
+@app.on_event("startup")
+async def initialize_http_clients():
+    """Keep TLS connections alive; repeated bot/supplier calls avoid TCP/TLS handshakes."""
+    global _telegram_http_client, _supplier_http_client
+    limits = httpx.Limits(max_connections=30, max_keepalive_connections=12, keepalive_expiry=30)
+    if _telegram_http_client is None:
+        _telegram_http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(10.0, connect=4.0), limits=limits,
+        )
+    if _supplier_http_client is None:
+        _supplier_http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(15.0, connect=4.0), limits=limits,
+        )
+
+
+@app.on_event("shutdown")
+async def close_resources():
+    global _telegram_http_client, _supplier_http_client, _pg_pool
+    for task in _background_tasks:
+        task.cancel()
+    if _background_tasks:
+        await asyncio.gather(*_background_tasks, return_exceptions=True)
+    _background_tasks.clear()
+    for client in (_telegram_http_client, _supplier_http_client):
+        if client is not None:
+            await client.aclose()
+    _telegram_http_client = None
+    _supplier_http_client = None
+    if _pg_pool is not None:
+        _pg_pool.close()
+        _pg_pool = None
+
+
 async def telegram_api(method, payload):
     if not BOT_TOKEN:
         raise RuntimeError("Telegram bot token is not configured")
-    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as client:
-        response = await client.post(f"https://api.telegram.org/bot{BOT_TOKEN}/{method}", json=payload)
-        response.raise_for_status()
-        result = response.json()
-        if not result.get("ok"):
-            # Never include the request URL in errors: it contains the bot token.
-            raise RuntimeError(f"Telegram API rejected {method}")
-        return result.get("result")
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
+    if _telegram_http_client is not None:
+        response = await _telegram_http_client.post(url, json=payload)
+    else:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=4.0)) as client:
+            response = await client.post(url, json=payload)
+    response.raise_for_status()
+    result = response.json()
+    if not result.get("ok"):
+        raise RuntimeError(f"Telegram API rejected {method}")
+    return result.get("result")
 
 
 def validate_production_config():
@@ -468,15 +554,42 @@ def admin_console(rest: str = ""):
 def health(): return {"status":"ok","service":"flux-api"}
 @app.get("/api/config")
 def config(): return {"brand":BRAND_NAME,"demo_mode":os.getenv("FLUX_DEMO_MODE","false").lower()=="true","payment_ttl_minutes":TTL,"currency":"USD"}
+_public_products_cache = {"expires_at": 0.0, "items": None}
+_public_products_lock = threading.Lock()
+
+
+def invalidate_public_products_cache():
+    with _public_products_lock:
+        _public_products_cache["expires_at"] = 0.0
+        _public_products_cache["items"] = None
+
+
+def public_products():
+    now = time.monotonic()
+    with _public_products_lock:
+        cached = _public_products_cache["items"]
+        if cached is not None and now < _public_products_cache["expires_at"]:
+            return cached
+        defaults = pricing_defaults()
+        with db() as c:
+            rows = c.execute("SELECT * FROM catalog WHERE enabled=1 AND removed=0 ORDER BY category, name").fetchall()
+        items = [catalog_public_item(r, defaults) for r in rows]
+        _public_products_cache["items"] = items
+        _public_products_cache["expires_at"] = time.monotonic() + 5
+        return items
+
+
 @app.get("/api/products")
-def products(category:str|None=None,q:str|None=None):
-    with db() as c:
-        rows = c.execute("SELECT * FROM catalog WHERE enabled=1 AND removed=0 ORDER BY category, name").fetchall()
-    defaults = pricing_defaults()
-    items = [catalog_public_item(r, defaults) for r in rows]
-    if category and category.lower() not in ("all","popular"): items=[p for p in items if p["category"].lower()==category.lower()]
-    if category and category.lower()=="popular": items=[p for p in items if p.get("tag") in ("Popular","Trending")]
-    if q: items=[p for p in items if q.lower() in (p["name"]+p["category"]+p["description"]).lower()]
+def products(response: Response, category: str | None = None, q: str | None = None):
+    response.headers["Cache-Control"] = "public, max-age=5, stale-while-revalidate=15"
+    items = public_products()
+    if category and category.lower() not in ("all", "popular"):
+        items = [p for p in items if p["category"].lower() == category.lower()]
+    if category and category.lower() == "popular":
+        items = [p for p in items if p.get("tag") in ("Popular", "Trending")]
+    if q:
+        needle = q.lower()
+        items = [p for p in items if needle in (p["name"] + p["category"] + p["description"]).lower()]
     return items
 @app.get("/api/me")
 def me(u=Depends(current_user)):
@@ -815,7 +928,16 @@ def set_setting(key, value):
         c.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, str(value)))
 
 def pricing_defaults():
-    return float(get_setting("default_margin_percent") or 0), int(float(get_setting("default_markup_cents") or 0))
+    with db() as c:
+        rows = c.execute(
+            "SELECT key,value FROM settings WHERE key IN (?,?)",
+            ("default_margin_percent", "default_markup_cents"),
+        ).fetchall()
+    values = {r["key"]: r["value"] for r in rows}
+    return (
+        float(values.get("default_margin_percent") or DEFAULT_SETTINGS["default_margin_percent"]),
+        int(float(values.get("default_markup_cents") or DEFAULT_SETTINGS["default_markup_cents"])),
+    )
 
 # ── Pricing: what the supplier charges us, and what we charge the customer ──
 def cost_cents_of(price):
@@ -887,11 +1009,14 @@ REFUND_REASONS = {
 async def supplier_request(method, path, json_body=None):
     if not SUPPLIER_API_KEY:
         raise SupplierError(0, "not_configured", "SUPPLIER_API_KEY is not set")
+    url = SUPPLIER_BASE + path
+    headers = {"X-API-Key": SUPPLIER_API_KEY, "Accept": "application/json"}
     try:
-        async with httpx.AsyncClient(timeout=25) as client:
-            r = await client.request(method, SUPPLIER_BASE + path,
-                                     headers={"X-API-Key": SUPPLIER_API_KEY, "Accept": "application/json"},
-                                     json=json_body)
+        if _supplier_http_client is not None:
+            r = await _supplier_http_client.request(method, url, headers=headers, json=json_body)
+        else:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=4.0)) as client:
+                r = await client.request(method, url, headers=headers, json=json_body)
     except httpx.HTTPError as exc:
         raise SupplierError(0, "network", type(exc).__name__)
     try:
@@ -905,46 +1030,70 @@ async def supplier_request(method, path, json_body=None):
     return data
 
 async def sync_catalog():
+    """Fetch once, then upsert the catalogue in batches to reduce database round trips."""
     data = await supplier_request("GET", "/products")
     items = data.get("products") or []
     now = datetime.now(timezone.utc).isoformat()
-    seen, added = set(), 0
     with db() as c:
-        existing = {r["id"] for r in c.execute("SELECT id FROM catalog").fetchall()}
-        prev_stock = {r["id"]: r["in_stock"] for r in c.execute("SELECT id, in_stock FROM catalog").fetchall()}
+        existing_rows = c.execute("SELECT id, in_stock FROM catalog").fetchall()
+        previous = {r["id"]: r["in_stock"] for r in existing_rows}
+        existing = set(previous)
+        seen, added, upserts = set(), 0, []
         for it in items:
-            pid = int(it.get("productId") or it.get("id"))
+            try:
+                pid = int(it.get("productId") or it.get("id"))
+            except (TypeError, ValueError):
+                continue
+            if pid <= 0:
+                continue
             seen.add(pid)
-            if pid not in existing: added += 1
-            # New products are listed automatically at the default margin. Admin overrides are never overwritten.
-            product_name = str(it.get("name") or it.get("title") or f"Product {pid}")
-            product_description = str(it.get("description") or "")
+            is_new = pid not in existing
+            if is_new:
+                added += 1
+            product_name = str(it.get("name") or it.get("title") or f"Product {pid}")[:500]
+            product_description = str(it.get("description") or "")[:5000]
             auto_category = classify_product(product_name, product_description)
             auto_image = image_for_product(product_name, auto_category)
-            c.execute("""INSERT INTO catalog(id,name,description,supplier_price,currency,stock,in_stock,synced_at,category)
-                VALUES(?,?,?,?,?,?,?,?,?)
-                ON CONFLICT(id) DO UPDATE SET name=excluded.name, description=excluded.description,
-                  supplier_price=excluded.supplier_price, currency=excluded.currency, stock=excluded.stock,
-                  in_stock=excluded.in_stock, synced_at=excluded.synced_at, removed=0""",
-                (pid, product_name, product_description,
-                 str(it.get("price") or "0"), str(it.get("currency") or "USD"), int(it.get("stock") or 0),
-                 1 if it.get("inStock") else 0, now, auto_category))
-            img = next((str(it[k]) for k in ("image", "imageUrl", "thumbnail") if str(it.get(k) or "").startswith("https://")), None)
-            c.execute("UPDATE catalog SET supplier_image=? WHERE id=?", (img, pid))
-            # Backfill only the legacy default category; preserve admin-selected categories.
-            c.execute("UPDATE catalog SET category=? WHERE id=? AND category='Subscriptions'", (auto_category, pid))
-            # Keep manually assigned images intact; fill only an empty image_url.
-            if auto_image:
-                c.execute("UPDATE catalog SET image_url=? WHERE id=? AND (image_url IS NULL OR image_url='')", (auto_image, pid))
-            if pid not in existing:
-                c.execute("UPDATE catalog SET added_at=? WHERE id=?", (now, pid))
-            elif prev_stock.get(pid) == 0 and (1 if it.get("inStock") else 0) == 1:
-                c.execute("UPDATE catalog SET restocked_at=? WHERE id=?", (now, pid))
-        gone = [i for i in existing if i not in seen]
-        for g in gone:
-            c.execute("UPDATE catalog SET removed=1, in_stock=0 WHERE id=?", (g,))
+            supplier_image = next(
+                (str(it[k])[:500] for k in ("image", "imageUrl", "thumbnail")
+                 if str(it.get(k) or "").startswith("https://")),
+                None,
+            )
+            stock = max(0, int(it.get("stock") or 0))
+            in_stock = 1 if it.get("inStock") and stock > 0 else 0
+            added_at = now if is_new else None
+            restocked_at = now if (not is_new and not previous.get(pid, 0) and in_stock) else None
+            upserts.append((
+                pid, product_name, product_description, str(it.get("price") or "0")[:80],
+                str(it.get("currency") or "USD")[:12], stock, in_stock, now, auto_category,
+                supplier_image, auto_image, added_at, restocked_at,
+            ))
+        if upserts:
+            c.executemany("""INSERT INTO catalog(
+                    id,name,description,supplier_price,currency,stock,in_stock,synced_at,category,
+                    supplier_image,image_url,added_at,restocked_at
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(id) DO UPDATE SET
+                    name=excluded.name,
+                    description=excluded.description,
+                    supplier_price=excluded.supplier_price,
+                    currency=excluded.currency,
+                    stock=excluded.stock,
+                    in_stock=excluded.in_stock,
+                    synced_at=excluded.synced_at,
+                    removed=0,
+                    category=CASE WHEN catalog.category='Subscriptions' THEN excluded.category ELSE catalog.category END,
+                    supplier_image=excluded.supplier_image,
+                    image_url=CASE WHEN catalog.image_url IS NULL OR catalog.image_url=''
+                        THEN COALESCE(excluded.image_url,catalog.image_url) ELSE catalog.image_url END,
+                    added_at=COALESCE(catalog.added_at,excluded.added_at),
+                    restocked_at=COALESCE(excluded.restocked_at,catalog.restocked_at)""", upserts)
+        gone = existing - seen
+        if gone:
+            c.executemany("UPDATE catalog SET removed=1, in_stock=0 WHERE id=?", ((pid,) for pid in gone))
     set_setting("catalog_synced_at", now)
-    return {"synced": len(items), "added": added, "removed": len(gone)}
+    invalidate_public_products_cache()
+    return {"synced": len(upserts), "added": added, "removed": len(gone)}
 
 def refund_order(oid, telegram_id, cents, reason):
     """Refund exactly once. The status change and the credit share one transaction, and the
@@ -1046,21 +1195,38 @@ async def reconcile_unclear_orders(only_id=None):
 
 async def sync_supplier_orders():
     with db() as c:
-        rows = [dict(r) for r in c.execute("SELECT id, telegram_id, price_cents, supplier_order_code FROM orders WHERE supplier_order_code IS NOT NULL AND status='processing'").fetchall()]
+        rows = [dict(r) for r in c.execute(
+            "SELECT id, telegram_id, price_cents, supplier_order_code FROM orders "
+            "WHERE supplier_order_code IS NOT NULL AND status='processing'"
+        ).fetchall()]
+    semaphore = asyncio.Semaphore(5)
+
+    async def fetch_status(row):
+        async with semaphore:
+            try:
+                order = (await supplier_request("GET", f"/orders/{row['supplier_order_code']}")).get("order") or {}
+                return row, order
+            except SupplierError:
+                return row, None
+
+    results = await asyncio.gather(*(fetch_status(row) for row in rows))
     updated = 0
-    for r in rows:
-        try:
-            o = (await supplier_request("GET", f"/orders/{r['supplier_order_code']}")).get("order") or {}
-        except SupplierError:
+    for row, order in results:
+        if order is None:
             continue
-        st = str(o.get("status") or "").lower()
-        if st == "completed":
-            value = o.get("value")
+        status = str(order.get("status") or "").lower()
+        if status == "completed":
+            value = order.get("value")
             note = None if value in (None, "", "DELIVERED_DIGITAL_PRODUCT") else str(value)
-            mark_order(r["id"], "delivered", note)
-            updated += 1
-        elif st in FAILED_STATUSES:
-            if refund_order(r["id"], r["telegram_id"], r["price_cents"], SUPPLIER_FAILED_NOTE):
+            with db() as c:
+                cur = c.execute(
+                    "UPDATE orders SET status='delivered', delivery_note=COALESCE(?,delivery_note) "
+                    "WHERE id=? AND status='processing'",
+                    (note, row["id"]),
+                )
+            updated += cur.rowcount
+        elif status in FAILED_STATUSES:
+            if refund_order(row["id"], row["telegram_id"], row["price_cents"], SUPPLIER_FAILED_NOTE):
                 updated += 1
     return updated
 
@@ -1189,9 +1355,11 @@ def admin_ops(u=Depends(admin)):
 
 @app.on_event("startup")
 async def start_catalog_sync():
-    asyncio.create_task(_catalog_loop())
-    asyncio.create_task(_reconcile_loop())
-    asyncio.create_task(_ops_loop())
+    _background_tasks.extend([
+        asyncio.create_task(_catalog_loop(), name="flux-catalog-sync"),
+        asyncio.create_task(_reconcile_loop(), name="flux-order-reconciliation"),
+        asyncio.create_task(_ops_loop(), name="flux-operations-checks"),
+    ])
 
 # ── Admin: catalogue, pricing and settings ─────────────────────────────────
 @app.get("/api/admin/catalog")
@@ -1233,6 +1401,7 @@ def admin_update_catalog(pid: int, b: CatalogUpdate, u=Depends(admin)):
     with db() as c:
         cur = c.execute(f"UPDATE catalog SET {assignments} WHERE id=?", (*fields.values(), pid))
         if cur.rowcount != 1: raise HTTPException(404, "Product not found")
+    invalidate_public_products_cache()
     return {"id": pid, "updated": list(fields)}
 
 @app.post("/api/admin/supplier/sync")
@@ -1271,6 +1440,7 @@ def admin_update_settings(b: SettingsUpdate, u=Depends(admin)):
         val = getattr(b, key)
         if val is None: continue
         set_setting(key, val.strip() if isinstance(val, str) else val)
+    invalidate_public_products_cache()
     return {"ok": True}
 
 # ── Admin notifications and Telegram button handling for top-ups ───────────
@@ -1450,7 +1620,8 @@ async def support_post(b: SupportMessageIn, u=Depends(current_user)):
 
 # ── Home feed: curated sections instead of one long list ───────────────────
 @app.get("/api/feed")
-def feed():
+def feed(response: Response):
+    response.headers["Cache-Control"] = "public, max-age=5, stale-while-revalidate=15"
     now = datetime.now(timezone.utc)
     week = (now - timedelta(days=7)).isoformat()
     month = (now - timedelta(days=30)).isoformat()
