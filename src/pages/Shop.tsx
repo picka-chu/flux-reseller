@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { PackageSearch, Search } from "lucide-react";
-import { AdSlot, PlanCard } from "../components/Blocks";
+import { AdSlot, CategoryMark, PlanCard } from "../components/Blocks";
 import { Empty, Skeleton } from "../components/ui";
 import type { Product } from "../lib/types";
 
@@ -35,7 +35,10 @@ export function Shop({ products, productsLoading, productsError, onBuy, onRetry 
       </label>
       <div className="scroll-x -mx-4 sm:-mx-5 mb-5 flex gap-2 overflow-x-auto px-4 sm:px-5">
         {categories.map((c) => (
-          <button key={c} onClick={() => setCategory(c)} className={`shrink-0 rounded-full px-4 py-2 text-[13px] font-semibold transition ${category === c ? "bg-ink text-bg" : "bg-fill text-ink"}`}>{c}</button>
+          <button key={c} onClick={() => setCategory(c)} aria-pressed={category === c} className={`flex shrink-0 items-center gap-2 rounded-full px-4 py-2 text-[13px] font-semibold transition ${category === c ? "bg-ink text-bg" : "bg-fill text-ink"}`}>
+            <CategoryMark name={c} size={15} />
+            {c}
+          </button>
         ))}
       </div>
 
