@@ -22,14 +22,20 @@ RULES = [
  ("Social", (r"\binstagram\b", r"\btiktok\b", r"\bfacebook\b", r"\blinkedin\b", r"\bsocial\b")),
  ("AI Tools", (r"\bartificial intelligence\b", r"\bai tools?\b", r"\bai bundle\b")),
 ]
-ICON_SLUGS = {
- "ChatGPT":"openai", "Gemini":"googlegemini", "Grok":"x", "Claude":"claude",
- "Cursor AI":"cursor", "Adobe":"adobe", "Autodesk":"autodesk", "Design":"figma",
- "Office":"microsoftoffice", "Streaming":"netflix", "Music":"spotify",
- "VPN":"protonvpn", "Security":"1password", "Games":"steam", "Social":"instagram",
- "Discord":"discord", "ElevenLabs":"elevenlabs", "DeepSeek":"deepseek",
- "Qwen AI":"alibabacloud",
-}
+# Only explicit product/brand names get a logo. Never infer a brand from a broad category.
+BRAND_LOGOS = [
+ (r"\b(chat\s*gpt|openai|gpt[- ]?(?:4|4o|5|plus|pro))\b", "openai"),
+ (r"\bgemini\b", "googlegemini"), (r"\bgrok\b", "x"),
+ (r"\bclaude\b", "claude"), (r"\bcursor\b", "cursor"),
+ (r"\badobe\b|\bphotoshop\b|\bpremiere\s*pro\b", "adobe"),
+ (r"\bautodesk\b|\bautocad\b", "autodesk"), (r"\bfigma\b", "figma"),
+ (r"\bcanva\b", "canva"), (r"\bnetflix\b", "netflix"),
+ (r"\bspotify\b", "spotify"), (r"\bdiscord\b", "discord"),
+ (r"eleven\s*labs", "elevenlabs"), (r"\bdeepseek\b", "deepseek"),
+ (r"\bqwen\b", "alibabacloud"), (r"\bduolingo\b", "duolingo"),
+ (r"\btiktok\b", "tiktok"), (r"\binstagram\b", "instagram"),
+ (r"\bproton\s*vpn\b", "protonvpn"), (r"\bsteam\b", "steam"),
+]
 
 def classify_product(name, description=""):
     """Classify a supplier product by its name and description."""
@@ -39,10 +45,10 @@ def classify_product(name, description=""):
             return category
     return "AI Tools" if re.search(r"\b(ai|artificial intelligence|llm)\b", text) else "Subscriptions"
 
-def image_for_product(name, category):
-    """Return a stable Simple Icons URL for recognized brands, else None."""
-    text = f"{name or ''} {category or ''}".lower()
-    for label, slug in ICON_SLUGS.items():
-        if label.lower() in text or (label == "Design" and re.search(r"\b(canva|figma|capcut)\b", text)):
+def image_for_product(name, category=""):
+    """Return a brand icon URL only when the actual product name identifies that brand."""
+    text = re.sub(r"[_/|]+", " ", f"{name or ''}").lower()
+    for pattern, slug in BRAND_LOGOS:
+        if re.search(pattern, text, re.IGNORECASE):
             return f"https://cdn.simpleicons.org/{slug}"
     return None

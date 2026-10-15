@@ -1,4 +1,4 @@
-import { ArrowUpRight, ChevronRight, Plus, type LucideIcon } from "lucide-react";
+import { ArrowUpRight, ChevronRight, Plus, Bot, BrainCircuit, Code2, Compass, GraduationCap, Headphones, LayoutGrid, Music2, Palette, ShieldCheck, ShoppingBag, Sparkles, Tv, Video, Wifi, Gamepad2, MessageCircle, type LucideIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { money, moneyParts, periodSuffix } from "../lib/format";
 import { request } from "../lib/api";
@@ -40,17 +40,27 @@ export function WalletStrip({ balance, loading, onAdd }: { balance?: number; loa
 }
 
 /** Product artwork: the plan's image when one exists, otherwise a sticker on a soft colour wash. */
-export function ProductArt({ product, className = "", large = false }: { product: Pick<Product, "accent" | "image_url" | "sticker" | "name">; className?: string; large?: boolean }) {
+const CATEGORY_ICONS: Record<string, LucideIcon> = {
+  "ChatGPT": Bot, "Gemini": Sparkles, "Grok": BrainCircuit, "Codex AI": Code2,
+  "Claude": BrainCircuit, "Kimi": Sparkles, "Video AI": Video, "ElevenLabs": Headphones,
+  "Qwen AI": Bot, "DeepSeek": Compass, "Cursor AI": Code2, "Adobe": Palette,
+  "Autodesk": LayoutGrid, "Design": Palette, "Office": LayoutGrid, "Education": GraduationCap,
+  "Streaming": Tv, "Music": Music2, "VPN": Wifi, "Security": ShieldCheck, "Games": Gamepad2,
+  "Discord": MessageCircle, "Social": MessageCircle, "AI Tools": Sparkles,
+};
+export function ProductArt({ product, className = "", large = false }: { product: Pick<Product, "accent" | "image_url" | "sticker" | "name" | "category">; className?: string; large?: boolean }) {
   const [broken, setBroken] = useState(false);
+  const CategoryIcon = CATEGORY_ICONS[product.category] ?? ShoppingBag;
   return (
-    <div
-      data-accent={product.accent}
-      className={`grid place-items-center overflow-hidden ${className}`}
-      style={{ background: "linear-gradient(150deg, color-mix(in srgb, var(--a, var(--brand)) 24%, var(--surface)) 0%, color-mix(in srgb, var(--a, var(--brand)) 7%, var(--surface)) 100%)" }}
-    >
-      {product.image_url && !broken
-        ? <img src={product.image_url} alt={product.name} loading="lazy" onError={() => setBroken(true)} className="h-full w-full object-cover" />
-        : <span aria-hidden="true" className={`select-none leading-none drop-shadow-[0_6px_10px_rgba(0,0,0,0.18)] ${large ? "text-[96px]" : "text-[56px]"}`} style={{ transform: "rotate(-6deg)" }}>{product.sticker}</span>}
+    <div data-accent={product.accent} className={`relative grid place-items-center overflow-hidden ${className}`}
+      style={{ background: "linear-gradient(150deg, color-mix(in srgb, var(--a, var(--brand)) 18%, var(--surface)) 0%, color-mix(in srgb, var(--a, var(--brand)) 6%, var(--surface)) 100%)" }}>
+      {product.image_url && !broken ? (
+        <img src={product.image_url} alt={product.name} loading="lazy" onError={() => setBroken(true)} className="relative z-[1] h-[58%] w-[58%] object-contain" />
+      ) : (
+        <span aria-hidden="true" className={`grid place-items-center rounded-[24%] bg-surface/80 text-brand ring-1 ring-line/70 ${large ? "h-28 w-28" : "h-20 w-20"}`}>
+          <CategoryIcon size={large ? 56 : 40} strokeWidth={1.7} />
+        </span>
+      )}
     </div>
   );
 }
