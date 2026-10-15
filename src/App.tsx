@@ -16,6 +16,7 @@ import { InfoSheet, SuccessSheet } from "./sheets/InfoSheets";
 import { SupportSheet } from "./sheets/SupportSheet";
 import { PaymentSheet } from "./sheets/PaymentSheet";
 import { ProductPage } from "./pages/ProductPage";
+import { LegalPage } from "./pages/LegalPage";
 import { TopUpSheet, type TopupCreated } from "./sheets/TopUpSheet";
 
 type SheetState =
@@ -31,6 +32,8 @@ export default function App() {
   const [tab, setTab] = useState<Tab>("home");
   const [sheet, setSheet] = useState<SheetState | null>(null);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  /** null = closed; { slug: null } = list of documents; { slug } = one document. */
+  const [legal, setLegal] = useState<{ slug: string | null } | null>(null);
 
   const me = useResource(() => request<Me>("/api/me"));
   const products = useResource(() => request<Product[]>("/api/products"));
@@ -48,7 +51,13 @@ export default function App() {
   const closeSheet = useCallback(() => setSheet(null), []);
   const go = useCallback((t: Tab) => { setTab(t); setSheet(null); setSelectedProduct(null); window.scrollTo({ top: 0, behavior: "smooth" }); }, []);
   const closeProduct = useCallback(() => { setSelectedProduct(null); window.scrollTo({ top: 0, behavior: "smooth" }); }, []);
-  useBackButton(sheet !== null || selectedProduct !== null || tab !== "home", () => (sheet ? closeSheet() : selectedProduct ? closeProduct() : go("home")));
+  useBackButton(sheet !== null || selectedProduct !== null || legal !== null || tab !== "home", () => {
+    if (sheet) closeSheet();
+    else if (selectedProduct) closeProduct();
+    else if (legal?.slug) setLegal({ slug: null });
+    else if (legal) setLegal(null);
+    else go("home");
+  });
 
   const openTopup = () => setSheet({ type: "topup" });
   const openHelp = () => setSheet({ type: "support" });
@@ -56,9 +65,11 @@ export default function App() {
   return (
     <ToastProvider>
       <div className="app-shell mx-auto w-full max-w-[480px] overflow-x-clip px-4 pb-[calc(104px+env(safe-area-inset-bottom))] sm:px-5">
-        {!selectedProduct && <Header name={me.data?.first_name} onProfile={() => go("profile")} />}
-        <main key={selectedProduct ? `product-${selectedProduct.id}` : tab}>
-          {selectedProduct ? (
+        {!selectedProduct && !legal && <Header name={me.data?.first_name} onProfile={() => go("profile")} />}
+        <main key={legal ? `legal-${legal.slug}` : selectedProduct ? `product-${selectedProduct.id}` : tab}>
+          {legal ? (
+            <LegalPage slug={legal.slug} onOpen={(slug) => setLegal({ slug })} onBack={() => setLegal(null)} />
+          ) : selectedProduct ? (
             <ProductPage product={selectedProduct} me={me.data} meLoading={me.loading} onBack={closeProduct} onTopup={openTopup} onPurchased={(id) => { setSelectedProduct(null); setSheet({ type: "purchased", id }); void me.reload(); void orders.reload(); }} />
           ) : <>
           {tab === "home" && (
@@ -77,7 +88,7 @@ export default function App() {
           )}
           {tab === "wallet" && <Wallet me={me.data} meLoading={me.loading} topups={topups.data} loading={topups.loading} error={topups.error} onTopup={openTopup} onRefresh={topups.reload} />}
           {tab === "orders" && <Orders orders={orders.data} loading={orders.loading} error={orders.error} onRefresh={orders.reload} onExplore={() => go("home")} />}
-          {tab === "profile" && <Profile me={me.data} meLoading={me.loading} mode={theme.mode} onMode={theme.setMode} go={go} onHelp={openHelp} onSafety={() => setSheet({ type: "info", kind: "safety" })} />}
+          {tab === "profile" && <Profile me={me.data} meLoading={me.loading} mode={theme.mode} onMode={theme.setMode} go={go} onHelp={openHelp} onSafety={() => setSheet({ type: "info", kind: "safety" })} onLegal={() => setLegal({ slug: null })} />}
           </>}
         </main>
       </div>

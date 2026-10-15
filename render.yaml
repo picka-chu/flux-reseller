@@ -2,7 +2,7 @@ services:
   - type: web
     name: flux-reseller
     runtime: python
-    plan: free
+    plan: free  # NOTE: free plans sleep when idle, which stops sync and alert loops. Use a paid plan for production (see docs/OPERATIONS.md).
     buildCommand: npm install && npm run build && pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
@@ -15,7 +15,15 @@ services:
       - key: SUPPLIER_API_KEY
         sync: false
       - key: BRAND_NAME
-        value: Storefront
+        value: FLUX
+      - key: SUPPLIER_LOW_BALANCE
+        value: "0"
+      - key: OPS_STUCK_MINUTES
+        value: "30"
+      - key: OPS_TOPUP_STALE_HOURS
+        value: "12"
+      - key: OPS_ALERT_COOLDOWN_MINUTES
+        value: "60"
       - key: FLUX_DEMO_MODE
         value: "false"
       - key: PAYMENT_TTL_MINUTES

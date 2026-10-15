@@ -1,80 +1,219 @@
-# FLUX — Subscription Reseller
+# FLUX
 
-FLUX is a Telegram Mini App for browsing subscription plans, requesting wallet top-ups, placing orders, and publishing sponsored ads from the admin console.
+FLUX is a Telegram Mini App and bot for buying digital subscriptions with a prepaid wallet.
+Customers browse plans, add funds, and buy. Orders are placed with a supplier through its reseller
+API, and delivered details appear under **Orders**. Admins run the store from a separate console
+at `/admin`.
 
-The customer and admin interfaces use a quiet, logo-free header so the content and current task stay prominent.
+> **Status:** in active development. Read [Going live](#going-live) before taking real money.
 
-## Current build
-- **React 19 + TypeScript + Vite + Tailwind CSS 4**, with a Coinbase-inspired design system: large balance read-outs, round quick actions, asset-style product rows, pill buttons, bottom sheets and skeleton loading states.
-- **Telegram-native behaviour:** follows Telegram's light/dark theme (with a manual override), syncs the header/background/bottom bar colors, uses the native BackButton, haptic feedback and native confirm dialogs, and respects safe areas.
-- Customer app: Home (marketplace), Wallet, Orders and Profile. The product sheet detects an insufficient balance and offers "Add funds" instead of failing at checkout.
-- Operations console at `/admin` (code-split, so customers never download it). Every admin API call is still enforced server-side by `ADMIN_TELEGRAM_IDS`.
-- Telegram bot commands: `/start`, `/help`, `/balance`, and `/orders`. Admin-only: `/pending`, `/stats`, `/approve TOPUP_ID`, and `/reject TOPUP_ID`. Verify funds in the receiving account before using `/approve`.
-- GitHub Actions typechecks and builds the frontend and checks Python syntax on every push and pull request.
+- [Features](#features)
+- [How it works](#how-it-works)
+- [Project layout](#project-layout)
+- [Run it locally](#run-it-locally)
+- [Configuration](#configuration)
+- [Set up Telegram](#set-up-telegram)
+- [Set up the supplier](#set-up-the-supplier)
+- [Deploy on Render](#deploy-on-render)
+- [Testing](#testing)
+- [Operations](#operations)
+- [Legal documents](#legal-documents)
+- [Going live](#going-live)
 
-## Project structure
+## Features
+
+**Customers**
+- Feed on the home screen: best offers, just restocked, trending plans, and sponsored placements.
+- Shop with search and category filters, sorting, and sold-out markers.
+- Product pages with price, billing period, stock, how the order is handled, and a sticky buy bar.
+- Wallet with deposits by USDT transfer (Bybit UID or Telegram Wallet), reviewed by hand.
+- Orders with live status and delivered details.
+- Support chat through the bot.
+- Light, dark, or Telegram theme.
+
+**Admins** (`/admin`, restricted to `ADMIN_TELEGRAM_IDS`)
+- Overview and 14-day revenue and order charts; a *needs attention* queue.
+- Top-up review (approve or reject against the exact amount and reference).
+- Order management: processing, delivered, rejected, refunded. Refunds are single-use.
+- Catalogue: margins, visibility, and supplier sync.
+- Sponsored ads for the home feed and shop.
+- Customers, support threads, and settings (payment addresses and pricing defaults).
+- Alerts to Telegram when something needs a human; health endpoint at `/api/admin/ops`.
+
+## How it works
+
 ```
+Customer (Telegram Mini App)
+   │  wallet debit, order request
+   ▼
+FastAPI backend ──► Supplier reseller API   (product, price, stock, order placement)
+   │  │
+   │  └─ unclear result? → hold as "needs review", reconcile against the supplier's order list
+   ▼
+PostgreSQL (Supabase) or SQLite (local)     wallet ledger, orders, top-ups, support, ads
+   ▲
+Admin console (/admin)   ·   Telegram bot (customer messages, admin alerts)
+```
+
+**Money rules.** The wallet is debited before the supplier is called. A clear refusal from the supplier
+refunds automatically. An unclear answer is never refunded or delivered by guesswork: the app checks
+the supplier's own order list. Refunds are idempotent, so the same order cannot be refunded twice.
+
+## Project layout
+
+```
+main.py                    FastAPI backend: API, supplier client, order logic, bot, ops, admin
 src/
-  main.tsx            entry (lazy-loads the admin console on /admin)
-  App.tsx             customer app shell, tabs and sheets
-  index.css           design tokens (light/dark) and component styles
-  lib/                api client, Telegram SDK wrapper, formatting, types
-  hooks/              useTheme, useResource, useBackButton
-  components/         UI kit (Button, Sheet, Toast...), chrome, shared blocks
-  pages/              Home, Wallet, Orders, Profile
-  sheets/             TopUp, Payment, Product and info sheets
-  admin/Admin.tsx     operations console
-main.py               FastAPI backend (API, Telegram webhook, serves frontend_dist)
+  main.tsx                 entry point (lazy-loads the admin console on /admin)
+  App.tsx                  customer shell: tabs, product page, sheets, back button
+  admin/                   operations console (overview, top-ups, orders, catalogue, ads, settings)
+  pages/                   Home, Shop, ProductPage, Wallet, Orders, Profile
+  sheets/                  top-up, payment, support, and info sheets
+  components/              UI kit, navigation, shared blocks
+  lib/                     API client, Telegram wrapper, formatting, brand, types
+tests/                     backend tests (pytest), run in CI
+scripts/                   backup.sh, restore_drill.sh
+docs/
+  OPERATIONS.md            alerts, health checks, backups
+  RUNBOOK.md               what to do when something needs attention
+  legal/                   terms, refund policy, privacy policy, supplier disclosure
+.github/workflows/ci.yml   typecheck, build, backend tests on every pull request
+render.yaml                Render deployment blueprint
 ```
 
-## Status: starter scaffold
-This is not production-ready for real payments or automated fulfillment. The supplier integration, customer delivery flow, and complete order-review/refund tooling are not implemented yet. Sample products and prices are placeholders. Top-ups require an administrator to confirm that funds actually arrived. Supplier API integration is not included yet.
+## Run it locally
 
-## Run locally
+You need Python 3.12, Node 20, and (optionally) PostgreSQL. SQLite works for local testing.
+
 ```bash
-# backend
+# Backend
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-FLUX_DEMO_MODE=true uvicorn main:app --reload      # API on :8000
+pip install -r requirements.txt -r requirements-dev.txt
+cp .env.example .env          # then edit it; see Configuration
+FLUX_DEMO_MODE=true ADMIN_TELEGRAM_IDS=100000001 uvicorn main:app --reload --port 8000
 
-# frontend (second terminal), hot reload with /api proxied to :8000
+# Frontend, in a second terminal (hot reload; /api is proxied to port 8000)
 npm install
-npm run dev                                         # http://localhost:5173
+npm run dev                   # http://localhost:5173
 ```
-For a production-style run, `npm run build` and open `http://localhost:8000` (FastAPI serves `frontend_dist/`). The admin console lives at `/admin`.
 
-Set `TELEGRAM_BOT_TOKEN` and `ADMIN_TELEGRAM_IDS` before using Telegram authentication. `FLUX_DEMO_MODE=true` is for local previews only and must never be enabled in production.
+`FLUX_DEMO_MODE=true` signs every request in as a demo user. **Never set it in production.**
 
-## Supabase database
-1. Create a Supabase project.
-2. Open **Project Settings → Database** and copy a PostgreSQL connection string. For hosted environments, use the Session Pooler if direct connectivity is unavailable.
-3. Add it to Render as the secret environment variable `SUPABASE_DB_URL`. Do not commit credentials to GitHub.
-4. On startup, the app creates the required starter tables automatically.
+For a production-style run, build the frontend and let FastAPI serve it:
 
-## Render
-Create a new Web Service from this repository. Build command: `pip install -r requirements.txt`. Start command: `uvicorn main:app --host 0.0.0.0 --port $PORT`.
+```bash
+npm run build
+uvicorn main:app --port 8000   # open http://localhost:8000
+```
 
-## Before accepting real funds
-- Set `SUPABASE_DB_URL` to your Supabase PostgreSQL connection string. The app prefers Supabase PostgreSQL when this variable is present and falls back to local SQLite only for local development.
-- Configure and verify recipient details for each supported payment method.
-- Implement supplier catalog sync and secure fulfillment.
-- Add admin review tooling, audit logs, rate limiting, monitoring, and backups.
-- Verify every payment from the receiving account before crediting any wallet.
-- Never treat a submitted transfer reference or unique decimal amount as proof of payment.
+Admin console: `http://localhost:8000/admin`.
 
-## Supplier integration
+## Configuration
 
-Plans are imported from the supplier's reseller API and sold at your margin.
+Set these as environment variables (Render: *Environment*; locally: `.env`).
 
-- `SUPPLIER_API_KEY` (required): your reseller API key. Keep it in the host's secret settings, never in the repo.
-- `SUPPLIER_API_BASE` (optional): defaults to the Gemini Pro reseller endpoint.
-- `CATALOG_SYNC_MINUTES` (optional): how often plans and stock refresh. Default 30.
+| Variable | Required | Purpose |
+|---|---|---|
+| `TELEGRAM_BOT_TOKEN` | Yes (production) | Bot token from @BotFather. Enables sign-in checks, support, and alerts. |
+| `TELEGRAM_WEBHOOK_SECRET` | Yes (production) | Random string that secures the bot webhook. |
+| `ADMIN_TELEGRAM_IDS` | Yes | Comma-separated Telegram user IDs allowed into `/admin` and to receive alerts. |
+| `FLUX_WEBAPP_URL` or `RENDER_EXTERNAL_URL` | Yes (production) | Public HTTPS URL of the app. The bot registers its webhook there. |
+| `SUPABASE_DB_URL` or `DATABASE_URL` | Yes (production) | PostgreSQL connection string. If unset, SQLite is used. |
+| `DATABASE_PATH` | No | SQLite file location (default `./flux.db`), for local use only. |
+| `SUPPLIER_API_KEY` | Yes (to sell) | Reseller API key. Without it, the catalogue is empty and ordering is off. |
+| `SUPPLIER_API_BASE` | No | Reseller API base URL (defaults to the supplier in use). |
+| `SUPPLIER_LOW_BALANCE` | No | Alert when the supplier balance drops below this amount. `0` disables it. |
+| `CATALOG_SYNC_MINUTES` | No | How often the catalogue is pulled from the supplier (default 30). |
+| `PAYMENT_TTL_MINUTES` | No | How long a deposit request stays valid (default 20). |
+| `OPS_STUCK_MINUTES` | No | Minutes before an order waiting on the supplier is reported (default 30). |
+| `OPS_TOPUP_STALE_HOURS` | No | Hours before a pending top-up is reported (default 12). |
+| `OPS_ALERT_COOLDOWN_MINUTES` | No | Minimum minutes between repeats of the same alert (default 60). |
+| `FLUX_DEMO_MODE` | No | `true` only for local development. Must be `false` in production. |
+| `BRAND_NAME` | No | Name shown in metadata and the bot. Set to `FLUX`. |
 
-Set margins and payment addresses in the admin console under Catalog and Settings.
+Brand text in the app and legal pages comes from `src/lib/brand.ts` and `src/lib/legal.ts`.
 
-How orders are handled:
-- A purchase re-checks the live supplier price and stock, then debits the customer's wallet.
-- If the supplier clearly rejects the order (for example insufficient supplier balance), the wallet is refunded automatically.
-- If the result is unclear (a timeout or an ambiguous error), the order is marked "Needs review" and is **not** refunded automatically, because the supplier may already have charged. Check the supplier's order list and resolve it in the admin console.
+## Set up Telegram
 
+1. In @BotFather, create a bot and copy its token into `TELEGRAM_BOT_TOKEN`.
+2. Make a random secret for `TELEGRAM_WEBHOOK_SECRET`, for example `python -c "import secrets;print(secrets.token_urlsafe(32))"`.
+3. In @BotFather, open the bot → *Bot Settings → Menu Button* (or *Configure Mini App*) and set the
+   URL to your public `https://` address.
+4. Deploy. On start, the app registers the webhook at `<public URL>/telegram/webhook/<secret>`.
+5. Every admin must start a chat with the bot, or they will not receive alerts.
+
+Bot commands for customers: `/start`, `/help`, `/balance`, `/orders`.
+Bot commands for admins: `/pending`, `/stats`, `/approve TOPUP_ID`, `/reject TOPUP_ID`, `/close`, `/cancel`.
+
+## Set up the supplier
+
+1. Create a reseller API key in your supplier account and set `SUPPLIER_API_KEY`.
+2. Confirm the supplier's products list and account info endpoints respond with that key.
+3. Keep enough balance with the supplier to cover orders. Set `SUPPLIER_LOW_BALANCE` so you are warned early.
+4. Open **Admin → Catalogue** after the first sync. Check each product's margin and visibility.
+
+If the key is missing, the app runs, but the catalogue stays empty and purchases are disabled.
+
+## Deploy on Render
+
+`render.yaml` describes the service.
+
+- **Build command:** `npm install && npm run build && pip install -r requirements.txt`
+- **Start command:** `uvicorn main:app --host 0.0.0.0 --port $PORT`
+- **Plan:** the blueprint uses the free plan. Free services sleep when idle, which stops the background
+  sync and alert loops. Use a paid plan for production (see [OPERATIONS.md](docs/OPERATIONS.md#free-hosting-warning)).
+
+Set the secret variables in Render (they are marked `sync: false`). Then deploy, and check:
+
+1. `https://<your-app>/health` returns OK.
+2. The logs show `Uvicorn running`, and no `Catalogue sync failed` lines.
+3. Open the bot in Telegram and send `/start`.
+4. Open the Mini App from the bot and confirm the catalogue loads.
+5. Open `/api/admin/ops` as an admin and confirm `alerts_enabled` is `true`.
+
+## Testing
+
+```bash
+pip install -r requirements.txt -r requirements-dev.txt
+python -m pytest -q tests        # backend: money paths, reconciliation, alerts
+npm run build                    # frontend: typecheck and production build
+```
+
+The backend tests use an in-process fake supplier and a temporary database. They need no network,
+Telegram token or supplier key. CI runs the same commands on every pull request.
+
+The frontend has no automated browser tests yet. Before a release, check the customer and admin screens
+at 320px and 390px width in a phone-sized browser.
+
+## Operations
+
+- **Alerts** go to Telegram: [docs/OPERATIONS.md](docs/OPERATIONS.md#1-alerts).
+- **Backups** run through `scripts/backup.sh`, with monthly restore drills: [docs/OPERATIONS.md](docs/OPERATIONS.md#2-backups).
+- **What to do** when an alert arrives or an order is stuck: [docs/RUNBOOK.md](docs/RUNBOOK.md).
+
+Start every day with the check in the runbook. Orders in **Needs review** need a human when they are
+flagged.
+
+## Legal documents
+
+Customer-facing terms are in [docs/legal](docs/legal/README.md): Terms of Service, Refund Policy,
+Privacy Policy, and Supplier Disclosure. They are drafts. Fill in the placeholders in `src/lib/legal.ts`
+and have a lawyer review them before launch.
+
+## Going live
+
+Do not take real customer money until every item below is done.
+
+- [ ] Real supplier orders tested end to end with small amounts, including a refund.
+- [ ] Sign-in, the bot, support, and a deposit tested inside real Telegram.
+- [ ] The migrations and orders tested against the production PostgreSQL database.
+- [ ] `FLUX_DEMO_MODE` is `false` in Render; `ADMIN_TELEGRAM_IDS` lists only the real admins.
+- [ ] `/api/admin/ops` shows `alerts_enabled: true`, and an alert reached every admin.
+- [ ] Nightly backup running, and one restore drill passed.
+- [ ] Legal placeholders filled and the drafts reviewed by a lawyer.
+- [ ] Every token pasted into chat or logs has been revoked and replaced.
+- [ ] The admin team has read the [runbook](docs/RUNBOOK.md).
+
+## License
+
+Proprietary. All rights reserved unless a licence is added.
