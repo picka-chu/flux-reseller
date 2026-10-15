@@ -1,4 +1,4 @@
-import { ArrowUpRight, PackageSearch, Search, ShieldCheck, Sparkles } from "lucide-react";
+import { ArrowUpRight, PackageSearch, ShieldCheck, Sparkles } from "lucide-react";
 import { AdSlot, CategoryMark, PlanCard, WalletStrip } from "../components/Blocks";
 import { Empty, Notice, Skeleton } from "../components/ui";
 import { inTelegram } from "../lib/telegram";
