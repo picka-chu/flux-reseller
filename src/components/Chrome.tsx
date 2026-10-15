@@ -22,7 +22,7 @@ export function Avatar({ name, size = 36 }: { name?: string; size?: number }) {
 
 export function Header({ onProfile, name }: { onProfile: () => void; name?: string }) {
   return (
-    <header className="sticky top-0 z-20 -mx-4 flex h-[calc(56px+env(safe-area-inset-top))] items-center justify-end bg-bg/90 px-4 pt-[env(safe-area-inset-top)] backdrop-blur-xl sm:-mx-5 sm:px-5">
+    <header className="sticky top-0 z-20 -mx-4 flex h-[calc(56px+var(--safe-top))] items-center justify-end bg-bg/90 px-4 pt-[var(--safe-top)] backdrop-blur-xl sm:-mx-5 sm:px-5">
       <button onClick={onProfile} aria-label="Profile"><Avatar name={name} /></button>
     </header>
   );
@@ -30,7 +30,7 @@ export function Header({ onProfile, name }: { onProfile: () => void; name?: stri
 
 export function BottomNav({ tab, onChange }: { tab: Tab; onChange: (t: Tab) => void }) {
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-bg/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl" aria-label="Main">
+    <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-bg/90 pb-[var(--safe-bottom)] backdrop-blur-xl" aria-label="Main">
       <div className="mx-auto flex max-w-[480px]">
         {TABS.map(({ id, label, icon: Icon }) => {
           const active = tab === id;

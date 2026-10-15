@@ -199,7 +199,7 @@ function Console() {
         </main>
       </div>
 
-      <nav aria-label="Admin" className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-bg/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden">
+      <nav aria-label="Admin" className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-bg/95 pb-[var(--safe-bottom)] backdrop-blur-xl md:hidden">
         <div className="mx-auto flex max-w-2xl">
           {([["overview", "Overview", LayoutDashboard], ["topups", "Top-ups", Wallet], ["orders", "Orders", Package], ["customers", "Customers", Users]] as [Page, string, LucideIcon][]).map(([id, label, Icon]) => {
             const active = page === id;

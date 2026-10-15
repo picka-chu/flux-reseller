@@ -4,6 +4,7 @@ import { Button, Notice, Skeleton, useToast } from "../components/ui";
 import { ProductArt } from "../components/Blocks";
 import { post } from "../lib/api";
 import { money, periodSuffix } from "../lib/format";
+import { inTelegram } from "../lib/telegram";
 import type { Me, Product } from "../lib/types";
 
 interface Props {
@@ -36,12 +37,13 @@ export function ProductPage({ product, me, meLoading, onBack, onTopup, onPurchas
 
   return (
     <div className="animate-rise min-w-0">
-      <header className="sticky top-0 z-10 -mx-4 mb-4 flex h-12 items-center bg-bg/95 px-4 backdrop-blur-xl sm:-mx-5 sm:px-5">
-        <button onClick={onBack} className="flex h-10 items-center gap-2 rounded-full pr-3 text-[14px] font-semibold" aria-label="Back to shop">
-          <ArrowLeft size={20} /> Back
-        </button>
-        <span className="ml-auto text-[13px] font-medium text-muted">Plan details</span>
-      </header>
+      {!inTelegram && (
+        <header className="sticky top-0 z-10 -mx-4 mb-4 flex h-12 items-center bg-bg/95 px-4 backdrop-blur-xl sm:-mx-5 sm:px-5">
+          <button onClick={onBack} className="flex h-10 items-center gap-2 rounded-full pr-3 text-[14px] font-semibold" aria-label="Back to shop">
+            <ArrowLeft size={20} /> Back
+          </button>
+        </header>
+      )}
 
       <section className="pb-6">
         <div className="relative mx-auto w-full max-w-[280px]">
