@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { PackageSearch, Search } from "lucide-react";
 import { AdSlot, CategoryMark, PlanCard } from "../components/Blocks";
 import { Empty, Skeleton } from "../components/ui";
@@ -6,12 +6,16 @@ import type { Product } from "../lib/types";
 
 interface Props {
   products: Product[] | null; productsLoading: boolean; productsError: string | null;
-  onBuy: (p: Product) => void; onRetry: () => void;
+  onBuy: (p: Product) => void; onRetry: () => void; initialCategory?: string;
 }
 
-export function Shop({ products, productsLoading, productsError, onBuy, onRetry }: Props) {
+export function Shop({ products, productsLoading, productsError, onBuy, onRetry, initialCategory = "All" }: Props) {
   const [query, setQuery] = useState("");
-  const [category, setCategory] = useState("All");
+  const [category, setCategory] = useState(initialCategory);
+
+  useEffect(() => {
+    setCategory(initialCategory);
+  }, [initialCategory]);
 
   const categories = useMemo(() => ["All", "Popular", ...Array.from(new Set((products ?? []).map((p) => p.category)))], [products]);
   const filtered = useMemo(() => {
