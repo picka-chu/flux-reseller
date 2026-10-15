@@ -42,7 +42,7 @@ export function WalletStrip({ balance, loading, onAdd }: { balance?: number; loa
 /** Simple Icons CDN slugs for brands with official marks in the free library. */
 const BRAND_LOGOS: Record<string, string> = {
   chatgpt: "openai", openai: "openai", codex: "openai", "codex ai": "openai",
-  gemini: "googlegemini", grok: "x", claude: "claude", kimi: "kimi",
+  gemini: "googlegemini", grok: "grok", claude: "claude", kimi: "kimi",
   elevenlabs: "elevenlabs", qwen: "qwen", deepseek: "deepseek", cursor: "cursor",
   "cursor ai": "cursor", adobe: "adobe", autodesk: "autodesk",
   office: "microsoftoffice", microsoft: "microsoft", discord: "discord",
