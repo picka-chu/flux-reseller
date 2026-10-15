@@ -1,4 +1,4 @@
-import { ArrowUpRight, ChevronRight, Plus, Bot, BrainCircuit, Clapperboard, Code2, Compass, GraduationCap, Headphones, LayoutGrid, LockKeyhole, Music2, Palette, ShieldCheck, ShoppingBag, Sparkles, Tv, Video, Wifi, Gamepad2, MessageCircle, type LucideIcon } from "lucide-react";
+import { ArrowUpRight, ChevronRight, Plus, Bot, BrainCircuit, Code2, Compass, GraduationCap, Headphones, LayoutGrid, Music2, Palette, ShieldCheck, ShoppingBag, Sparkles, Tv, Video, Wifi, Gamepad2, MessageCircle, type LucideIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { money, moneyParts, periodSuffix } from "../lib/format";
 import { request } from "../lib/api";
