@@ -22,19 +22,49 @@ RULES = [
  ("Social", (r"\binstagram\b", r"\btiktok\b", r"\bfacebook\b", r"\blinkedin\b", r"\bsocial\b")),
  ("AI Tools", (r"\bartificial intelligence\b", r"\bai tools?\b", r"\bai bundle\b")),
 ]
-# Only explicit product/brand names get a logo. Never infer a brand from a broad category.
+
+# Slugs are Simple Icons CDN identifiers. Match explicit product names only:
+# a category or generic description must never receive an unrelated brand logo.
 BRAND_LOGOS = [
  (r"\b(chat\s*gpt|openai|gpt[- ]?(?:4|4o|5|plus|pro))\b", "openai"),
- (r"\bgemini\b", "googlegemini"), (r"\bgrok\b", "x"),
- (r"\bclaude\b", "claude"), (r"\bcursor\b", "cursor"),
- (r"\badobe\b|\bphotoshop\b|\bpremiere\s*pro\b", "adobe"),
- (r"\bautodesk\b|\bautocad\b", "autodesk"), (r"\bfigma\b", "figma"),
- (r"\bcanva\b", "canva"), (r"\bnetflix\b", "netflix"),
- (r"\bspotify\b", "spotify"), (r"\bdiscord\b", "discord"),
- (r"eleven\s*labs", "elevenlabs"), (r"\bdeepseek\b", "deepseek"),
- (r"\bqwen\b", "alibabacloud"), (r"\bduolingo\b", "duolingo"),
- (r"\btiktok\b", "tiktok"), (r"\binstagram\b", "instagram"),
- (r"\bproton\s*vpn\b", "protonvpn"), (r"\bsteam\b", "steam"),
+ (r"\bgemini\b", "googlegemini"),
+ (r"\bgrok\b", "x"),
+ (r"\bclaude\b", "claude"),
+ (r"\bkimi\b", "kimi"),
+ (r"\bdeep\s*seek\b", "deepseek"),
+ (r"\bqwen\b", "alibabacloud"),
+ (r"\bcursor\b", "cursor"),
+ (r"\brunway\b", "runway"),
+ (r"\bsora\b", "openai"),
+ (r"\bpika\b", "pika"),
+ (r"\bveo\b", "google"),
+ (r"eleven\s*labs", "elevenlabs"),
+ (r"\bsuno\b", "suno"),
+ (r"\badobe\b|\bphotoshop\b|\bpremiere\s*pro\b|\bacrobat\b", "adobe"),
+ (r"\bautodesk\b|\bautocad\b|\brevit\b", "autodesk"),
+ (r"\bfigma\b", "figma"),
+ (r"\bcanva\b", "canva"),
+ (r"\bcapcut\b", "capcut"),
+ (r"\bnetflix\b", "netflix"),
+ (r"\bspotify\b", "spotify"),
+ (r"\bdiscord\b", "discord"),
+ (r"\btelegram\b", "telegram"),
+ (r"\bduolingo\b", "duolingo"),
+ (r"\bcoursera\b", "coursera"),
+ (r"\bskillshare\b", "skillshare"),
+ (r"\binstagram\b", "instagram"),
+ (r"\btiktok\b", "tiktok"),
+ (r"\byoutube\b", "youtube"),
+ (r"\blinkedin\b", "linkedin"),
+ (r"\bfacebook\b", "facebook"),
+ (r"\bproton\s*vpn\b", "protonvpn"),
+ (r"\bnord\s*vpn\b", "nordvpn"),
+ (r"\bexpress\s*vpn\b", "expressvpn"),
+ (r"\bsurfshark\b", "surfshark"),
+ (r"\bsteam\b", "steam"),
+ (r"\bplaystation\b", "playstation"),
+ (r"\bxbox\b", "xbox"),
+ (r"\broblox\b", "roblox"),
 ]
 
 def classify_product(name, description=""):
@@ -46,7 +76,7 @@ def classify_product(name, description=""):
     return "AI Tools" if re.search(r"\b(ai|artificial intelligence|llm)\b", text) else "Subscriptions"
 
 def image_for_product(name, category=""):
-    """Return a brand icon URL only when the actual product name identifies that brand."""
+    """Return a brand icon URL only when the product name explicitly identifies it."""
     text = re.sub(r"[_/|]+", " ", f"{name or ''}").lower()
     for pattern, slug in BRAND_LOGOS:
         if re.search(pattern, text, re.IGNORECASE):
