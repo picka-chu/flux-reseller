@@ -7,3 +7,4 @@ flux.db
 .DS_Store
 node_modules/
 frontend_dist/
+backups/

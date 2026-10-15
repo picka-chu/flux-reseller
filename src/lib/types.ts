@@ -33,6 +33,7 @@ export interface AdminTopup {
 export interface AdminOrder {
   id: string; telegram_id: number; username?: string; first_name?: string;
   product_id: string; product_name?: string; status: string; price: number; cost: number; created_at: string;
+  review_note?: string | null;
 }
 export interface AdminUser {
   telegram_id: number; username?: string; first_name?: string; balance: number; orders_count: number;

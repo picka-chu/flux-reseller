@@ -169,7 +169,7 @@ function Console() {
                       <Cell title={o.id} sub={dateTime(o.created_at)} />
                       <Cell title={`${o.first_name || "Customer"} · ${o.telegram_id}`} sub={`@${o.username || "not set"}`} />
                       <Cell title={o.product_name || o.product_id} sub={`${money(o.price)} · profit ${money(o.price - o.cost)}`} />
-                      <div><StatusPill status={o.status} /></div>
+                      <div className="min-w-0"><StatusPill status={o.status} />{o.review_note && <p className="mt-1.5 text-[12px] leading-snug text-warn">{o.review_note}</p>}</div>
                       <div className="flex flex-wrap gap-2">
                         {!["delivered", "refunded"].includes(o.status) && (<>
                           <Button size="sm" variant="secondary" disabled={!!acting} onClick={() => setStatus(o, "processing")}>Processing</Button>
@@ -199,7 +199,7 @@ function Console() {
         </main>
       </div>
 
-      <nav aria-label="Admin" className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-bg/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden">
+      <nav aria-label="Admin" className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-bg/95 pb-[var(--safe-bottom)] backdrop-blur-xl md:hidden">
         <div className="mx-auto flex max-w-2xl">
           {([["overview", "Overview", LayoutDashboard], ["topups", "Top-ups", Wallet], ["orders", "Orders", Package], ["customers", "Customers", Users]] as [Page, string, LucideIcon][]).map(([id, label, Icon]) => {
             const active = page === id;

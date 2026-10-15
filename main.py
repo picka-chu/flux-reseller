@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from psycopg.rows import dict_row
 from datetime import datetime, timezone, timedelta
 from fastapi import FastAPI, HTTPException, Header, Depends, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import httpx
@@ -991,10 +991,12 @@ async def _reconcile_loop():
     while True:
         try:
             if SUPPLIER_API_KEY:
-                await reconcile_unclear_orders()
+                OPS["last_reconcile_report"] = await reconcile_unclear_orders()
                 await sync_supplier_orders()
+                OPS["last_reconcile"] = datetime.now(timezone.utc).isoformat()
         except Exception as exc:
             print(f"Order reconciliation failed: {type(exc).__name__}: {exc}")
+            await alert_admins("reconcile-error", f"Order reconciliation failed: {type(exc).__name__}. Orders may stay in 'Needs review' until this is fixed.")
         await asyncio.sleep(120)
 
 async def _catalog_loop():
@@ -1002,14 +1004,117 @@ async def _catalog_loop():
         try:
             if SUPPLIER_API_KEY:
                 await sync_catalog()
+                OPS["last_catalog_sync"] = datetime.now(timezone.utc).isoformat()
+                OPS["catalog_failures"] = 0
         except Exception as exc:
+            OPS["catalog_failures"] += 1
             print(f"Catalogue sync failed: {type(exc).__name__}: {exc}")
+            if OPS["catalog_failures"] >= 3:
+                await alert_admins("catalog-sync", f"Catalogue sync has failed {OPS['catalog_failures']} times in a row ({type(exc).__name__}). Check SUPPLIER_API_KEY and the supplier status.")
         await asyncio.sleep(max(1, CATALOG_SYNC_MINUTES) * 60)
+
+# ── Operations: health checks and admin alerts ──────────────────────────────
+OPS = {"last_catalog_sync": None, "catalog_failures": 0, "last_reconcile": None, "last_reconcile_report": None}
+OPS_ALERT_COOLDOWN = timedelta(minutes=int(os.getenv("OPS_ALERT_COOLDOWN_MINUTES", "60")))
+OPS_STUCK_MINUTES = int(os.getenv("OPS_STUCK_MINUTES", "30"))
+OPS_TOPUP_STALE_HOURS = int(os.getenv("OPS_TOPUP_STALE_HOURS", "12"))
+SUPPLIER_LOW_BALANCE = float(os.getenv("SUPPLIER_LOW_BALANCE", "0") or 0)
+_last_alert_at = {}
+
+async def alert_admins(key, text):
+    """Message every admin on Telegram. The same key is sent at most once per cooldown,
+    so a broken supplier cannot flood anyone's chat."""
+    now = datetime.now(timezone.utc)
+    last = _last_alert_at.get(key)
+    if last and now - last < OPS_ALERT_COOLDOWN:
+        return False
+    _last_alert_at[key] = now
+    print(f"ALERT [{key}] {text}")
+    for admin_id in sorted(ADMIN_IDS):
+        try:
+            await telegram_api("sendMessage", {"chat_id": admin_id, "text": f"FLUX alert\n\n{text}"[:3800]})
+        except Exception as exc:
+            print(f"Could not send alert to admin: {type(exc).__name__}")
+    return True
+
+def ops_snapshot():
+    """Counts that decide whether an admin needs to act. Reads only; changes nothing."""
+    now = datetime.now(timezone.utc)
+    def minutes_old(iso):
+        t = parse_ts(iso)
+        return (now - t).total_seconds() / 60 if t else 0
+    with db() as c:
+        orders = [dict(r) for r in c.execute("SELECT id,status,created_at,review_note FROM orders WHERE status IN ('needs_review','processing')").fetchall()]
+        topups = [dict(r) for r in c.execute("SELECT id,created_at FROM topups WHERE status='pending'").fetchall()]
+    review = [o for o in orders if o["status"] == "needs_review"]
+    processing = [o for o in orders if o["status"] == "processing"]
+    return {
+        "needs_review": len(review),
+        "needs_review_over_limit": sum(1 for o in review if minutes_old(o["created_at"]) >= OPS_STUCK_MINUTES),
+        "flagged_no_supplier_record": sum(1 for o in review if o["review_note"]),
+        "processing_over_limit": sum(1 for o in processing if minutes_old(o["created_at"]) >= OPS_STUCK_MINUTES),
+        "pending_topups": len(topups),
+        "topups_over_limit": sum(1 for t in topups if minutes_old(t["created_at"]) >= OPS_TOPUP_STALE_HOURS * 60),
+    }
+
+async def ops_check():
+    """Look for anything that needs an admin, and send one digest if there is. Safe to run often."""
+    snap = ops_snapshot()
+    issues = []
+    if snap["flagged_no_supplier_record"]:
+        issues.append(f"{snap['flagged_no_supplier_record']} order(s) have no supplier record after 15 minutes. Decide: refund or mark delivered (Admin > Orders, status Needs review).")
+    if snap["needs_review_over_limit"]:
+        issues.append(f"{snap['needs_review_over_limit']} order(s) waiting over {OPS_STUCK_MINUTES} min for supplier confirmation.")
+    if snap["processing_over_limit"]:
+        issues.append(f"{snap['processing_over_limit']} order(s) still processing after {OPS_STUCK_MINUTES} min. Check the supplier order status.")
+    if snap["topups_over_limit"]:
+        issues.append(f"{snap['topups_over_limit']} top-up(s) pending over {OPS_TOPUP_STALE_HOURS} h. Verify the transfers (Admin > Top-ups).")
+    if OPS["catalog_failures"] >= 3:
+        issues.append("Catalogue sync keeps failing. Check SUPPLIER_API_KEY and the supplier status.")
+    if SUPPLIER_API_KEY and SUPPLIER_LOW_BALANCE > 0:
+        try:
+            balance = float((await supplier_request("GET", "/account/balance")).get("balance") or 0)
+            if balance < SUPPLIER_LOW_BALANCE:
+                issues.append(f"Supplier balance is low: {balance:.2f}. Top it up before orders start failing.")
+        except SupplierError as exc:
+            issues.append(f"Supplier balance could not be checked ({exc.code}).")
+    if issues:
+        digest = "Operations check\n\n" + "\n".join(f"- {i}" for i in issues)
+        await alert_admins("digest:" + str(hash(tuple(issues))), digest)
+    return {"snapshot": snap, "issues": issues}
+
+async def _ops_loop():
+    while True:
+        try:
+            await ops_check()
+        except Exception as exc:
+            print(f"Operations check failed: {type(exc).__name__}: {exc}")
+        await asyncio.sleep(600)
+
+@app.exception_handler(Exception)
+async def unhandled_error(request: Request, exc: Exception):
+    """Never show internals to customers; tell admins which route failed (rate-limited)."""
+    print(f"Unhandled error on {request.method} {request.url.path}: {type(exc).__name__}: {exc}")
+    await alert_admins(f"500:{request.url.path}", f"Unhandled error on {request.method} {request.url.path} ({type(exc).__name__}). Check the server logs.")
+    return JSONResponse({"detail": "Something went wrong. Please try again."}, status_code=500)
+
+@app.get("/api/admin/ops")
+def admin_ops(u=Depends(admin)):
+    return {
+        **ops_snapshot(),
+        "last_catalog_sync": OPS["last_catalog_sync"],
+        "catalog_failures": OPS["catalog_failures"],
+        "last_reconcile": OPS["last_reconcile"],
+        "last_reconcile_report": OPS["last_reconcile_report"],
+        "alerts_enabled": bool(BOT_TOKEN and ADMIN_IDS),
+        "stuck_after_minutes": OPS_STUCK_MINUTES,
+    }
 
 @app.on_event("startup")
 async def start_catalog_sync():
     asyncio.create_task(_catalog_loop())
     asyncio.create_task(_reconcile_loop())
+    asyncio.create_task(_ops_loop())
 
 # ── Admin: catalogue, pricing and settings ─────────────────────────────────
 @app.get("/api/admin/catalog")

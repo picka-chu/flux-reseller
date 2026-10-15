@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { BottomNav, Header, type Tab } from "./components/Chrome";
 import { Sheet, ToastProvider } from "./components/ui";
 import { useBackButton } from "./hooks/useBackButton";
+import { useFullscreen } from "./hooks/useFullscreen";
 import { useResource } from "./hooks/useResource";
 import { useTheme } from "./hooks/useTheme";
 import { request } from "./lib/api";
@@ -28,6 +29,7 @@ type SheetState =
 
 export default function App() {
   const theme = useTheme();
+  const fullscreen = useFullscreen();
   const [tab, setTab] = useState<Tab>("home");
   const [sheet, setSheet] = useState<SheetState | null>(null);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
@@ -55,11 +57,11 @@ export default function App() {
 
   return (
     <ToastProvider>
-      <div className="app-shell mx-auto w-full max-w-[480px] overflow-x-clip px-4 pb-[calc(104px+env(safe-area-inset-bottom))] sm:px-5">
+      <div className="app-shell mx-auto w-full max-w-[480px] overflow-x-clip px-4 pb-[calc(104px+var(--safe-bottom))] sm:px-5">
         {!selectedProduct && <Header name={me.data?.first_name} onProfile={() => go("profile")} />}
         <main key={selectedProduct ? `product-${selectedProduct.id}` : tab}>
           {selectedProduct ? (
-            <ProductPage product={selectedProduct} me={me.data} meLoading={me.loading} onBack={closeProduct} onTopup={openTopup} onPurchased={(id) => { setSelectedProduct(null); setSheet({ type: "purchased", id }); void me.reload(); void orders.reload(); }} />
+            <div className="pt-[var(--safe-top)]"><ProductPage product={selectedProduct} me={me.data} meLoading={me.loading} onBack={closeProduct} onTopup={openTopup} onPurchased={(id) => { setSelectedProduct(null); setSheet({ type: "purchased", id }); void me.reload(); void orders.reload(); }}  /></div>
           ) : <>
           {tab === "home" && (
             <Home
@@ -77,7 +79,7 @@ export default function App() {
           )}
           {tab === "wallet" && <Wallet me={me.data} meLoading={me.loading} topups={topups.data} loading={topups.loading} error={topups.error} onTopup={openTopup} onRefresh={topups.reload} />}
           {tab === "orders" && <Orders orders={orders.data} loading={orders.loading} error={orders.error} onRefresh={orders.reload} onExplore={() => go("home")} />}
-          {tab === "profile" && <Profile me={me.data} meLoading={me.loading} mode={theme.mode} onMode={theme.setMode} go={go} onHelp={openHelp} onSafety={() => setSheet({ type: "info", kind: "safety" })} />}
+          {tab === "profile" && <Profile me={me.data} meLoading={me.loading} mode={theme.mode} onMode={theme.setMode} go={go} onHelp={openHelp} onSafety={() => setSheet({ type: "info", kind: "safety" })} fullscreen={fullscreen} />}
           </>}
         </main>
       </div>

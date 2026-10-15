@@ -123,7 +123,7 @@ export function Sheet({ onClose, children, locked }: { onClose: () => void; chil
       <section
         role="dialog"
         aria-modal="true"
-        className="animate-sheet max-h-[92dvh] w-full max-w-lg overflow-y-auto rounded-t-[28px] bg-bg px-5 pb-[calc(24px+env(safe-area-inset-bottom))] sm:rounded-[28px]"
+        className="animate-sheet max-h-[92dvh] w-full max-w-lg overflow-y-auto rounded-t-[28px] bg-bg px-5 pb-[calc(24px+var(--safe-bottom))] sm:rounded-[28px]"
       >
         <div className="sticky top-0 z-10 -mx-5 mb-2 flex items-center justify-between bg-bg px-5 pb-1 pt-3">
           <span className="mx-auto h-1 w-10 rounded-full bg-line sm:hidden" />
@@ -158,7 +158,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     <ToastCtx.Provider value={notify}>
       {children}
       {toast && (
-        <div role="status" className="animate-rise pointer-events-none fixed inset-x-0 bottom-[calc(96px+env(safe-area-inset-bottom))] z-50 flex justify-center px-4">
+        <div role="status" className="animate-rise pointer-events-none fixed inset-x-0 bottom-[calc(96px+var(--safe-bottom))] z-50 flex justify-center px-4">
           <div className={`max-w-sm rounded-2xl px-4 py-3 text-sm font-medium shadow-xl ${toast.tone === "error" ? "bg-down text-white" : "bg-ink text-bg"}`}>
             {toast.msg}
           </div>
