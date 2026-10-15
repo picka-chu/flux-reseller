@@ -97,3 +97,18 @@ def test_refund_is_idempotent(user_balance, balance):
     assert main.refund_order("OR-IDEM", 100000001, 100, "one") is True
     assert main.refund_order("OR-IDEM", 100000001, 100, "two") is False
     assert balance() == START + 100
+
+
+def test_retried_purchase_with_same_idempotency_key_charges_and_places_once(client, supplier, user_balance, balance):
+    pid = product_id(client)
+    user_balance(START)
+    payload = {"product_id": pid["id"], "idempotency_key": "purchase_retry_1234567890"}
+
+    first = client.post("/api/orders", json=payload)
+    second = client.post("/api/orders", json=payload)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["id"] == second.json()["id"]
+    assert len(supplier.orders) == 1
+    assert balance() == START - round(pid["price"] * 100)
