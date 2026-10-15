@@ -42,7 +42,7 @@ export function Home({ me, meLoading, feed, feedLoading, feedError, onBuy, onTop
               <h2 className="text-[19px] font-bold tracking-tight">{section.title}</h2>
               <p className="text-[13px] text-muted">{section.subtitle}</p>
             </div>
-            <div className="scroll-x -mx-5 flex snap-x gap-3 overflow-x-auto px-5 pb-1">
+            <div className="scroll-x -mx-4 sm:-mx-5 flex snap-x gap-3 overflow-x-auto px-4 sm:px-5 pb-1">
               {section.items.map((p) => (
                 <div key={p.id} className="w-[min(156px,43vw)] shrink-0 snap-start">
                   <PlanCard product={p} onClick={() => onBuy(p)} />

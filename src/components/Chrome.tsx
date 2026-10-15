@@ -22,7 +22,7 @@ export function Avatar({ name, size = 36 }: { name?: string; size?: number }) {
 
 export function Header({ onProfile, name }: { onProfile: () => void; name?: string }) {
   return (
-    <header className="sticky top-0 z-20 -mx-5 flex h-[calc(56px+env(safe-area-inset-top))] items-center justify-end bg-bg/90 px-5 pt-[env(safe-area-inset-top)] backdrop-blur-xl">
+    <header className="sticky top-0 z-20 -mx-4 flex h-[calc(56px+env(safe-area-inset-top))] items-center justify-end bg-bg/90 px-4 pt-[env(safe-area-inset-top)] backdrop-blur-xl sm:-mx-5 sm:px-5">
       <button onClick={onProfile} aria-label="Profile"><Avatar name={name} /></button>
     </header>
   );
