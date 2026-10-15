@@ -125,7 +125,10 @@ def init_db():
         # Telegram IDs exceed PostgreSQL's signed 32-bit INTEGER range.
         # Convert existing production columns to BIGINT as an idempotent migration.
         if c.postgres:
-            for table in ("users", "topups", "ledger", "orders"):
+            # Telegram user IDs are 64-bit. Support threads also store the sender ID;
+            # leaving that column as INTEGER causes /api/support/messages to fail
+            # with NumericValueOutOfRange for real Telegram accounts.
+            for table in ("users", "topups", "ledger", "orders", "support_threads"):
                 c.execute(f"ALTER TABLE {table} ALTER COLUMN telegram_id TYPE BIGINT")
 DEFAULT_SETTINGS = {
     "default_margin_percent": "20",
