@@ -39,8 +39,27 @@ export function WalletStrip({ balance, loading, onAdd }: { balance?: number; loa
   );
 }
 
-/** Product artwork: the plan's image when one exists, otherwise a sticker on a soft colour wash. */
+/** Simple Icons CDN slugs for brands with official marks in the free library. */
+const BRAND_LOGOS: Record<string, string> = {
+  chatgpt: "openai", openai: "openai", codex: "openai", "codex ai": "openai",
+  gemini: "googlegemini", grok: "grok", claude: "claude", kimi: "kimi",
+  elevenlabs: "elevenlabs", qwen: "qwen", deepseek: "deepseek", cursor: "cursor",
+  "cursor ai": "cursor", adobe: "adobe", autodesk: "autodesk",
+  office: "microsoftoffice", microsoft: "microsoft", discord: "discord",
+  linkedin: "linkedin", social: "linkedin",
+};
+
+/** Brand names may appear in either a product title or its category. */
+function logoSlugFor(value: string): string | undefined {
+  const normalized = value.trim().toLowerCase();
+  return BRAND_LOGOS[normalized] ?? Object.entries(BRAND_LOGOS).find(([name]) =>
+    normalized.startsWith(name + " ") || normalized.startsWith(name + "+") || normalized.startsWith(name + "-")
+  )?.[1];
+}
+
+/** Category icon fallbacks for generic categories or logos not in Simple Icons. */
 const CATEGORY_ICONS: Record<string, LucideIcon> = {
+  "All": LayoutGrid, "Popular": Sparkles,
   "ChatGPT": Bot, "Gemini": Sparkles, "Grok": BrainCircuit, "Codex AI": Code2,
   "Claude": BrainCircuit, "Kimi": Sparkles, "Video AI": Video, "ElevenLabs": Headphones,
   "Qwen AI": Bot, "DeepSeek": Compass, "Cursor AI": Code2, "Adobe": Palette,
@@ -48,14 +67,36 @@ const CATEGORY_ICONS: Record<string, LucideIcon> = {
   "Streaming": Tv, "Music": Music2, "VPN": Wifi, "Security": ShieldCheck, "Games": Gamepad2,
   "Discord": MessageCircle, "Social": MessageCircle, "AI Tools": Sparkles,
 };
-export function ProductArt({ product, className = "", large = false }: { product: Pick<Product, "accent" | "image_url" | "sticker" | "name" | "category">; className?: string; large?: boolean }) {
+
+/** Category mark: official brand SVG when available, otherwise a matching Lucide symbol. */
+export function CategoryMark({ name, size = 16 }: { name: string; size?: number }) {
   const [broken, setBroken] = useState(false);
+  const slug = logoSlugFor(name);
+  const Icon = CATEGORY_ICONS[name] ?? ShoppingBag;
+  if (slug && !broken) {
+    return <img src={`https://cdn.simpleicons.org/${slug}`} alt="" aria-hidden="true" width={size} height={size}
+      loading="lazy" onError={() => setBroken(true)} className="shrink-0 object-contain" />;
+  }
+  return <Icon size={size} aria-hidden="true" className="shrink-0" />;
+}
+
+/** Product artwork prefers a merchant-uploaded image, then a matching brand logo, then a category symbol. */
+export function ProductArt({ product, className = "", large = false }: { product: Pick<Product, "accent" | "image_url" | "sticker" | "name" | "category">; className?: string; large?: boolean }) {
+  const [failedSources, setFailedSources] = useState<string[]>([]);
+  const sources = [
+    product.image_url || undefined,
+    logoSlugFor(product.name) ? `https://cdn.simpleicons.org/${logoSlugFor(product.name)}` : undefined,
+    logoSlugFor(product.category) ? `https://cdn.simpleicons.org/${logoSlugFor(product.category)}` : undefined,
+  ].filter((source, index, all): source is string => Boolean(source) && all.indexOf(source) === index);
+  const imageSource = sources.find((source) => !failedSources.includes(source));
   const CategoryIcon = CATEGORY_ICONS[product.category] ?? ShoppingBag;
   return (
     <div data-accent={product.accent} className={`relative grid place-items-center overflow-hidden ${className}`}
       style={{ background: "linear-gradient(150deg, color-mix(in srgb, var(--a, var(--brand)) 18%, var(--surface)) 0%, color-mix(in srgb, var(--a, var(--brand)) 6%, var(--surface)) 100%)" }}>
-      {product.image_url && !broken ? (
-        <img src={product.image_url} alt={product.name} loading="lazy" onError={() => setBroken(true)} className="relative z-[1] h-[58%] w-[58%] object-contain" />
+      {imageSource ? (
+        <img src={imageSource} alt={product.name} loading="lazy"
+          onError={() => setFailedSources((failed) => failed.includes(imageSource) ? failed : [...failed, imageSource])}
+          className={`relative z-[1] object-contain ${product.image_url === imageSource ? "h-full w-full" : "h-[58%] w-[58%]"}`} />
       ) : (
         <span aria-hidden="true" className={`grid place-items-center rounded-[24%] bg-surface/80 text-brand ring-1 ring-line/70 ${large ? "h-28 w-28" : "h-20 w-20"}`}>
           <CategoryIcon size={large ? 56 : 40} strokeWidth={1.7} />
