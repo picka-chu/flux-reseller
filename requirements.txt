@@ -1,6 +1,10 @@
-psycopg[binary]>=3.2,<4.0
-httpx>=0.27,<1.0
-fastapi>=0.115,<1.0
-uvicorn[standard]>=0.30,<1.0
-pydantic>=2.8,<3.0
-psycopg_pool>=3.2,<4.0
+# Direct dependencies, pinned for reproducible builds.
+# Transitive deps resolve from these; run `pip install -r requirements.txt` then
+# `pip freeze > requirements.lock.txt` if you want a fully frozen lockfile.
+fastapi==0.141.1
+starlette==1.7.0
+pydantic==2.13.5
+httpx==0.28.1
+uvicorn[standard]==0.54.0
+psycopg[binary]==3.3.6
+psycopg_pool==3.3.3

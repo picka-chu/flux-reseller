@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { ArrowLeft, Check, PackageCheck } from "lucide-react";
 import { Button, Notice, Skeleton, useToast } from "../components/ui";
 import { ProductArt } from "../components/Blocks";
-import { post } from "../lib/api";
+import { ApiError, post } from "../lib/api";
 import { money, periodSuffix } from "../lib/format";
 import { inTelegram } from "../lib/telegram";
 import type { Me, Product } from "../lib/types";
@@ -38,7 +38,13 @@ export function ProductPage({ product, me, meLoading, onBack, onTopup, onPurchas
       purchaseKey.current = null;
       onPurchased(order.id);
     } catch (error) {
-      toast(error instanceof Error ? error.message : "Request failed", "error");
+      // An expired/invalid Telegram session is different from a server or network failure;
+      // show the correct instruction instead of a misleading "Open in Telegram" message.
+      if (error instanceof ApiError && (error.status === 401 || error.status === 503)) {
+        toast(error.message || "Open the app inside Telegram to continue.", "error");
+      } else {
+        toast(error instanceof Error ? error.message : "Request failed", "error");
+      }
     } finally {
       setBusy(false);
     }
@@ -109,7 +115,7 @@ export function ProductPage({ product, me, meLoading, onBack, onTopup, onPurchas
         {short
           ? <Button full size="lg" onClick={onTopup}>Add funds to continue</Button>
           : <Button full size="lg" loading={busy} disabled={!me || meLoading || !product.in_stock} onClick={buy}>
-              {!product.in_stock ? "Sold out" : meLoading ? "Checking wallet…" : me ? `${oneTime ? "Buy" : "Subscribe"} · ${money(product.price)}${per}` : "Open in Telegram to continue"}
+              {!product.in_stock ? "Sold out" : meLoading ? "Checking wallet…" : me ? `${oneTime ? "Buy" : "Subscribe"} · ${money(product.price)}${per}` : "Sign in via Telegram to buy"}
             </Button>}
         <p className="mt-2 flex items-center justify-center gap-1.5 text-center text-[11px] text-muted"><PackageCheck size={13} /> No charge until you confirm</p>
       </div>

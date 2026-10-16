@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "react";
 import {
-  AlertTriangle, Boxes, Check, ChevronRight, Coins, LayoutDashboard, Megaphone, Moon, MoreHorizontal, Package, Receipt, RefreshCw,
+  Activity, AlertTriangle, Boxes, Check, ChevronRight, Coins, LayoutDashboard, Megaphone, Moon, MoreHorizontal, Package, Receipt, RefreshCw,
   Search, Settings, ShieldCheck, Sun, TrendingUp, UserPlus, Users, Wallet, X, type LucideIcon
 } from "lucide-react";
 import { Button, Empty, Segmented, Sheet, StatusPill, ToastProvider, useToast } from "../components/ui";
@@ -8,9 +8,9 @@ import { useTheme } from "../hooks/useTheme";
 import { post, request } from "../lib/api";
 import { confirmAction } from "../lib/telegram";
 import { dateTime, money, titleCase } from "../lib/format";
-import type { AdminAd, AdminCatalog, AdminCatalogItem, AdminDashboard, AdminOrder, AdminOverview, AdminSettings, AdminTopup, AdminUser, CatalogDefaults } from "../lib/types";
+import type { AdminAd, AdminCatalog, AdminCatalogItem, AdminDashboard, AdminOrder, AdminOps, AdminOverview, AdminSettings, AdminTopup, AdminUser, CatalogDefaults } from "../lib/types";
 
-type Page = "overview" | "topups" | "orders" | "customers" | "ads" | "catalog" | "settings";
+type Page = "overview" | "topups" | "orders" | "customers" | "ads" | "catalog" | "settings" | "ops";
 const NAV: { id: Page; label: string; icon: LucideIcon }[] = [
   { id: "overview", label: "Overview", icon: LayoutDashboard },
   { id: "topups", label: "Top-ups", icon: Wallet },
@@ -18,6 +18,7 @@ const NAV: { id: Page; label: string; icon: LucideIcon }[] = [
   { id: "customers", label: "Customers", icon: Users },
   { id: "ads", label: "Ads", icon: Megaphone },
   { id: "catalog", label: "Catalog", icon: Boxes },
+  { id: "ops", label: "Ops", icon: Activity },
   { id: "settings", label: "Settings", icon: Settings }
 ];
 const TITLES: Record<Page, [string, string]> = {
@@ -27,6 +28,7 @@ const TITLES: Record<Page, [string, string]> = {
   customers: ["Customers", "Search registered customer accounts."],
   ads: ["Ads", "Publish sponsored placements for the home and shop pages."],
   catalog: ["Catalog", "Supplier plans, your margins, and what customers see."],
+  ops: ["Ops", "Health checks, background jobs, and alert delivery."],
   settings: ["Settings", "Pricing defaults and payment addresses."]
 };
 
@@ -46,11 +48,13 @@ function Console() {
   const [ads, setAds] = useState<AdminAd[]>([]);
   const [catalog, setCatalog] = useState<AdminCatalog | null>(null);
   const [settingsData, setSettingsData] = useState<AdminSettings | null>(null);
+  const [opsData, setOpsData] = useState<AdminOps | null>(null);
   const [search, setSearch] = useState("");
   const [moreOpen, setMoreOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [acting, setActing] = useState("");
+  const [notes, setNotes] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     setLoading(true); setError("");
@@ -63,6 +67,7 @@ function Console() {
       if (page === "ads") setAds(await request<AdminAd[]>("/api/admin/ads"));
       if (page === "catalog") setCatalog(await request<AdminCatalog>("/api/admin/catalog"));
       if (page === "catalog" || page === "settings") setSettingsData(await request<AdminSettings>("/api/admin/settings"));
+      if (page === "ops") setOpsData(await request<AdminOps>("/api/admin/ops"));
     } catch (e) { setError(e instanceof Error ? e.message : "Request failed"); }
     finally { setLoading(false); }
   }, [page]);
@@ -81,10 +86,10 @@ function Console() {
   };
   const decide = (t: AdminTopup, decision: "approve" | "reject") =>
     act(t.id, `${decision === "approve" ? "Approve" : "Reject"} top-up ${t.id}?${decision === "approve" ? " Only approve after confirming the funds arrived." : ""}`,
-      () => post(`/api/admin/topups/${encodeURIComponent(t.id)}`, { decision }), `Top-up ${decision}d`);
+      () => post(`/api/admin/topups/${encodeURIComponent(t.id)}`, { decision, note: notes[t.id]?.trim() || null }), `Top-up ${decision}d`);
   const setStatus = (o: AdminOrder, status: string) =>
     act(o.id, `${status === "refunded" ? "Refund" : `Mark as ${status}`} order ${o.id}?`,
-      () => post(`/api/admin/orders/${encodeURIComponent(o.id)}`, { status }), "Order updated");
+      () => post(`/api/admin/orders/${encodeURIComponent(o.id)}`, { status, note: notes[o.id]?.trim() || null }), "Order updated");
 
   const q = search.toLowerCase();
   const match = (...v: unknown[]) => v.join(" ").toLowerCase().includes(q);
@@ -95,7 +100,7 @@ function Console() {
   const [title, subtitle] = TITLES[page];
   useEffect(() => { document.title = "Admin"; }, []);
   const navigate = (p: Page) => { setPage(p); setSearch(""); setMoreOpen(false); };
-  const MORE_PAGES: Page[] = ["ads", "catalog", "settings"];
+  const MORE_PAGES: Page[] = ["ads", "catalog", "ops", "settings"];
 
   return (
     <div className="mx-auto min-h-dvh max-w-7xl px-4 pb-12 sm:px-7">
@@ -128,19 +133,20 @@ function Console() {
           {error && (
             <div className="mb-5 flex gap-3 rounded-2xl bg-down/10 p-4 text-[14px] text-down">
               <AlertTriangle size={18} className="mt-0.5 shrink-0" />
-              <div><b>Couldn’t load admin data</b><p className="mt-1 opacity-90">{error}. Make sure this Telegram account is listed in ADMIN_TELEGRAM_IDS.</p></div>
+              <div><b>Couldn’t load admin data</b><p className="mt-1 opacity-90">{error}. This account may not have admin access.</p></div>
             </div>
           )}
           <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
             <div><h1 className="text-[26px] font-bold tracking-tight sm:text-[32px]">{title}</h1><p className="mt-1 text-[14px] text-muted sm:text-[15px]">{subtitle}</p></div>
-            {!["overview", "ads", "catalog", "settings"].includes(page) && <span className="text-[13px] text-muted">{count} records · latest 100</span>}
+            {!["overview", "ads", "catalog", "settings", "ops"].includes(page) && <span className="text-[13px] text-muted">{count} records · latest 100</span>}
           </div>
 
           {page === "overview" && <DashboardPanel d={dashboard} o={overview} go={setPage} />}
           {page === "ads" && <AdsPanel ads={ads} reload={load} />}
           {page === "catalog" && <CatalogPanel catalog={catalog} settings={settingsData} reload={load} />}
           {page === "settings" && <SettingsPanel settings={settingsData} reload={load} />}
-          {!["overview", "ads", "catalog", "settings"].includes(page) && (
+          {page === "ops" && <OpsPanel ops={opsData} />}
+          {!["overview", "ads", "catalog", "settings", "ops"].includes(page) && (
             <>
               <label className="mb-4 flex h-12 items-center gap-2.5 rounded-full bg-fill px-4 text-muted focus-within:ring-2 focus-within:ring-brand">
                 <Search size={18} />
@@ -156,6 +162,12 @@ function Console() {
                       <div><StatusPill status={t.status} /></div>
                       <div className="flex gap-2">
                         {t.status === "pending" ? (<>
+                          <input
+                            className="input h-9 min-w-0 w-28 text-[12px]"
+                            placeholder="Note (optional)"
+                            value={notes[t.id] ?? ""}
+                            onChange={(e) => setNotes((n) => ({ ...n, [t.id]: e.target.value }))}
+                          />
                           <Button size="sm" loading={acting === t.id} disabled={!!acting} onClick={() => decide(t, "approve")}><Check size={14} /> Approve</Button>
                           <Button size="sm" variant="secondary" disabled={!!acting} onClick={() => decide(t, "reject")}><X size={14} /> Reject</Button>
                         </>) : <span className="text-[13px] text-muted">Reviewed</span>}
@@ -170,10 +182,17 @@ function Console() {
                       <Cell title={`${o.first_name || "Customer"} · ${o.telegram_id}`} sub={`@${o.username || "not set"}`} />
                       <Cell title={o.product_name || o.product_id} sub={`${money(o.price)} · profit ${money(o.price - o.cost)}`} />
                       <div className="min-w-0"><StatusPill status={o.status} />{o.review_note && <p className="mt-1.5 text-[12px] leading-snug text-warn">{o.review_note}</p>}</div>
-                      <div className="flex flex-wrap gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <input
+                          className="input h-9 min-w-0 w-28 text-[12px]"
+                          placeholder="Note / delivery details"
+                          value={notes[o.id] ?? ""}
+                          onChange={(e) => setNotes((n) => ({ ...n, [o.id]: e.target.value }))}
+                        />
                         {!["delivered", "refunded"].includes(o.status) && (<>
                           <Button size="sm" variant="secondary" disabled={!!acting} onClick={() => setStatus(o, "processing")}>Processing</Button>
                           <Button size="sm" disabled={!!acting} onClick={() => setStatus(o, "delivered")}>Delivered</Button>
+                          <Button size="sm" variant="secondary" disabled={!!acting} onClick={() => setStatus(o, "rejected")}>Reject</Button>
                           <Button size="sm" variant="danger" disabled={!!acting} onClick={() => setStatus(o, "refunded")}>Refund</Button>
                         </>)}
                       </div>
@@ -384,6 +403,38 @@ function DashboardPanel({ d, o, go }: { d: AdminDashboard | null; o: AdminOvervi
   );
 }
 
+function OpsPanel({ ops }: { ops: AdminOps | null }) {
+  if (!ops) return <div className="card p-5 text-[14px] text-muted">Loading ops data…</div>;
+  const rows: { label: string; value: string; warn?: boolean }[] = [
+    { label: "Alerts enabled", value: ops.alerts_enabled ? "Yes" : "No — no alerts are being delivered", warn: !ops.alerts_enabled },
+    { label: "Needs review", value: String(ops.needs_review) },
+    { label: "Needs review over limit", value: String(ops.needs_review_over_limit), warn: ops.needs_review_over_limit > 0 },
+    { label: "Flagged: no supplier record", value: String(ops.flagged_no_supplier_record), warn: ops.flagged_no_supplier_record > 0 },
+    { label: "Processing over limit", value: String(ops.processing_over_limit), warn: ops.processing_over_limit > 0 },
+    { label: "Pending top-ups", value: String(ops.pending_topups) },
+    { label: "Top-ups over limit", value: String(ops.topups_over_limit), warn: ops.topups_over_limit > 0 },
+    { label: "Catalogue sync failures", value: String(ops.catalog_failures), warn: ops.catalog_failures >= 3 },
+    { label: "Last catalogue sync", value: ops.last_catalog_sync ? dateTime(ops.last_catalog_sync) : "Never" },
+    { label: "Last reconciliation", value: ops.last_reconcile ? dateTime(ops.last_reconcile) : "Never" },
+    { label: "Stuck after (minutes)", value: String(ops.stuck_after_minutes) }
+  ];
+  return (
+    <div className="card divide-y divide-line overflow-hidden">
+      {rows.map(({ label, value, warn }) => (
+        <div key={label} className="flex items-center justify-between gap-3 px-5 py-3.5 text-[14px]">
+          <span className="text-muted">{label}</span>
+          <b className={`text-right ${warn ? "text-down" : ""}`}>{value}</b>
+        </div>
+      ))}
+      {ops.last_reconcile_report && (
+        <div className="px-5 py-3.5 text-[13px] text-muted">
+          Last reconcile report: {Object.entries(ops.last_reconcile_report).map(([k, v]) => `${k}=${v}`).join(" · ")}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Table({ cols, head, children, empty }: { cols: string; head: string[]; children: ReactNode[]; empty: ReactNode }) {
   return (
     <>
@@ -408,14 +459,24 @@ function AdsPanel({ ads, reload }: { ads: AdminAd[]; reload: () => Promise<void>
   };
 
   const create = async () => {
+    const link = form.link_url.trim();
+    const image = form.image_url.trim();
+    if ((link && !link.startsWith("https://")) || (image && !image.startsWith("https://"))) {
+      toast("Links and images must use https://", "error");
+      return;
+    }
+    if (form.title.trim().length < 2) {
+      toast("Give the ad a title of at least 2 characters.", "error");
+      return;
+    }
     setSaving(true);
     try {
       await post("/api/admin/ads", {
         title: form.title.trim(),
         body: form.body.trim() || null,
         cta: form.cta.trim() || null,
-        link_url: form.link_url.trim() || null,
-        image_url: form.image_url.trim() || null,
+        link_url: link || null,
+        image_url: image || null,
         placement: form.placement,
         ends_at: form.ends_at || null
       });

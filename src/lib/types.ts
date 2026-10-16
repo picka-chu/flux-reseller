@@ -66,6 +66,13 @@ export interface AdminSettings {
   supplier: { configured: boolean; store: string | null; ordering_enabled: boolean | null; balance: number | null; currency: string | null; error: string | null };
 }
 
+export interface AdminOps {
+  needs_review: number; needs_review_over_limit: number; flagged_no_supplier_record: number;
+  processing_over_limit: number; pending_topups: number; topups_over_limit: number;
+  last_catalog_sync: string | null; catalog_failures: number; last_reconcile: string | null;
+  last_reconcile_report: Record<string, number> | null; alerts_enabled: boolean; stuck_after_minutes: number;
+}
+
 export interface SupportMessage { id: string; sender: "customer" | "admin"; body: string; created_at: string }
 export interface SupportState { thread: { id: string; status: string } | null; messages: SupportMessage[] }
 

@@ -74,7 +74,7 @@ export default function App() {
           {tab === "home" && (
             <Home
               me={me.data} meLoading={me.loading}
-              products={products.data} productsLoading={products.loading}
+              products={products.data} productsLoading={products.loading} productsError={products.error}
               feed={feed.data} feedLoading={feed.loading} feedError={feed.error}
               onBuy={setSelectedProduct}
               onTopup={openTopup} onShop={openShop} onHelp={openHelp} onRetry={() => { void feed.reload(); void products.reload(); }}

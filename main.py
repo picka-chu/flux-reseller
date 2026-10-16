@@ -16,11 +16,18 @@ from decimal import Decimal, ROUND_CEILING
 logger = logging.getLogger("flux")
 APP_ENV = os.getenv("APP_ENV", "development").strip().lower()
 IS_PRODUCTION = APP_ENV == "production"
+# Render always sets RENDER. Treat it as a production signal so demo mode / SQLite
+# fallback can never sneak in just because APP_ENV was forgotten.
+ON_RENDER = bool(os.getenv("RENDER"))
 ROOT = os.path.dirname(os.path.abspath(__file__))
 DATABASE_URL = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL", "")
 DB_PATH = os.getenv("DATABASE_PATH", os.path.join(ROOT, "flux.db"))
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-ADMIN_IDS = {int(x) for x in os.getenv("ADMIN_TELEGRAM_IDS", "").split(",") if x.strip().isdigit()}
+_admin_raw = os.getenv("ADMIN_TELEGRAM_IDS", "")
+ADMIN_IDS = {int(x) for x in _admin_raw.split(",") if x.strip().isdigit()}
+_bad_admin_entries = [x for x in _admin_raw.split(",") if x.strip() and not x.strip().isdigit()]
+if _bad_admin_entries:
+    logger.warning("Ignoring invalid ADMIN_TELEGRAM_IDS entries: %s", ", ".join(_bad_admin_entries))
 TTL = int(os.getenv("PAYMENT_TTL_MINUTES", "20"))
 WEBAPP_URL = os.getenv("FLUX_WEBAPP_URL", os.getenv("RENDER_EXTERNAL_URL", "")).rstrip("/")
 BRAND_NAME = os.getenv("BRAND_NAME", "FLUX")
@@ -28,10 +35,41 @@ SUPPLIER_BASE = os.getenv("SUPPLIER_API_BASE", "https://api-geminipro.ignorelist
 SUPPLIER_API_KEY = os.getenv("SUPPLIER_API_KEY", "").strip()
 CATALOG_SYNC_MINUTES = int(os.getenv("CATALOG_SYNC_MINUTES", "30"))
 WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip() or ("" if IS_PRODUCTION else secrets.token_urlsafe(32))
+DEMO_MODE = os.getenv("FLUX_DEMO_MODE", "false").strip().lower() in ("true", "1", "yes", "on")
+# Demo mode is a complete authentication bypass. It is only ever allowed on a
+# local, non-Render, non-production process.
+DEMO_ALLOWED = DEMO_MODE and not IS_PRODUCTION and not ON_RENDER
 app = FastAPI(title="Store API", version="0.2.0")
 FRONTEND_DIST = os.path.join(ROOT, "frontend_dist")
 if os.path.isdir(os.path.join(FRONTEND_DIST, "assets")):
     app.mount("/assets", StaticFiles(directory=os.path.join(FRONTEND_DIST, "assets")), name="frontend-assets")
+
+# ── Security headers on every response ────────────────────────────────────────
+_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' https://telegram.org; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' https://cdn.simpleicons.org data:; "
+    "font-src 'self'; "
+    "connect-src 'self'; "
+    "frame-src https://*.telegram.org; "
+    "base-uri 'self'; form-action 'self'; object-src 'none'; frame-ancestors 'none'"
+)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    if request.url.scheme == "https":
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    content_type = response.headers.get("content-type", "")
+    if "text/html" in content_type:
+        response.headers.setdefault("Content-Security-Policy", _CSP)
+    return response
 
 class DatabaseAdapter:
     """Small compatibility layer so existing parameterized queries work on SQLite and PostgreSQL."""
@@ -108,6 +146,32 @@ def db():
     finally:
         conn.close()
 
+
+def _db_call(fn):
+    with db() as c:
+        return fn(c)
+
+
+async def run_db(fn):
+    """Run a synchronous DB unit of work on a worker thread so it never blocks the event loop."""
+    return await asyncio.to_thread(_db_call, fn)
+
+
+# ── Small in-memory rate limiter (per-process; good enough for one Render instance) ──
+_rate_buckets: dict[str, list[float]] = {}
+_rate_lock = threading.Lock()
+
+
+def rate_limit(key: str, limit: int, window_seconds: int = 60):
+    now = time.monotonic()
+    with _rate_lock:
+        bucket = _rate_buckets.setdefault(key, [])
+        cutoff = now - window_seconds
+        bucket[:] = [t for t in bucket if t > cutoff]
+        if len(bucket) >= limit:
+            raise HTTPException(429, "Too many requests. Please wait a moment and try again.")
+        bucket.append(now)
+
 def init_db():
     with db() as c:
         c.executescript("""
@@ -123,13 +187,15 @@ def init_db():
         CREATE TABLE IF NOT EXISTS ads(id TEXT PRIMARY KEY,title TEXT NOT NULL,body TEXT,cta TEXT,link_url TEXT,image_url TEXT,placement TEXT NOT NULL,active INTEGER NOT NULL DEFAULT 1,ends_at TEXT,created_at TEXT NOT NULL);
         """)
         # Telegram IDs exceed PostgreSQL's signed 32-bit INTEGER range.
-        # Convert existing production columns to BIGINT as an idempotent migration.
+        # Convert existing production columns to BIGINT as an idempotent migration,
+        # but only when the column is not already BIGINT (avoids a table rewrite per deploy).
         if c.postgres:
-            # Telegram user IDs are 64-bit. Support threads also store the sender ID;
-            # leaving that column as INTEGER causes /api/support/messages to fail
-            # with NumericValueOutOfRange for real Telegram accounts.
             for table in ("users", "topups", "ledger", "orders", "support_threads"):
-                c.execute(f"ALTER TABLE {table} ALTER COLUMN telegram_id TYPE BIGINT")
+                col = c.execute(
+                    "SELECT data_type FROM information_schema.columns "
+                    "WHERE table_name=%s AND column_name='telegram_id'", (table,)).fetchone()
+                if col and col["data_type"] != "bigint":
+                    c.execute(f"ALTER TABLE {table} ALTER COLUMN telegram_id TYPE BIGINT")
 DEFAULT_SETTINGS = {
     "default_margin_percent": "20",
     "default_markup_cents": "0",
@@ -172,8 +238,23 @@ def migrate_and_seed():
         for k, v in DEFAULT_SETTINGS.items():
             c.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO NOTHING", (k, v))
 
-init_db()
-migrate_and_seed()
+_database_ready = False
+
+
+def bootstrap_database():
+    """Create/migrate schema. Idempotent; safe to call more than once."""
+    global _database_ready
+    if _database_ready:
+        return
+    init_db()
+    migrate_and_seed()
+    _database_ready = True
+
+
+if not IS_PRODUCTION:
+    # Local, tests and dev: tables must exist at import time so tooling works.
+    # In production the first startup handler validates config BEFORE touching the database.
+    bootstrap_database()
 
 class TopupCreate(BaseModel):
     amount: float = Field(gt=0, le=10000)
@@ -231,14 +312,22 @@ def validate_init(raw):
         u=json.loads(pairs["user"]); return {"id":int(u["id"]),"username":u.get("username",""),"first_name":u.get("first_name","Customer")}
     except Exception: raise HTTPException(401,"Invalid Telegram user data")
 
-def current_user(authorization: str|None=Header(default=None)):
-    if os.getenv("FLUX_DEMO_MODE","false").lower()=="true": return {"id":100000001,"username":"demo_user","first_name":"Demo"}
-    if not authorization or not authorization.startswith("tma "): raise HTTPException(401,"Open the app inside Telegram to continue")
+def current_user(authorization: str | None = Header(default=None)):
+    if DEMO_MODE:
+        if not DEMO_ALLOWED:
+            # Demo mode is a full auth bypass; never allow it on a production/Render host.
+            raise HTTPException(500, "Demo mode must be disabled in production")
+        return {"id": 100000001, "username": "demo_user", "first_name": "Demo"}
+    if not authorization or not authorization.startswith("tma "):
+        raise HTTPException(401, "Open the app inside Telegram to continue")
     return validate_init(authorization[4:])
+
+def ensure_user_row(c, u):
+    c.execute("INSERT INTO users(telegram_id,username,first_name,created_at) VALUES(?,?,?,?) ON CONFLICT(telegram_id) DO UPDATE SET username=excluded.username,first_name=excluded.first_name",(u["id"],u.get("username",""),u.get("first_name","Customer"),datetime.now(timezone.utc).isoformat()))
 
 def ensure_user(u):
     with db() as c:
-        c.execute("INSERT INTO users(telegram_id,username,first_name,created_at) VALUES(?,?,?,?) ON CONFLICT(telegram_id) DO UPDATE SET username=excluded.username,first_name=excluded.first_name",(u["id"],u.get("username",""),u.get("first_name","Customer"),datetime.now(timezone.utc).isoformat()))
+        ensure_user_row(c, u)
 
 def admin(u=Depends(current_user)):
     if u["id"] not in ADMIN_IDS: raise HTTPException(403,"Admin access required")
@@ -282,19 +371,28 @@ async def close_resources():
         _pg_pool = None
 
 
+class TelegramApiError(Exception):
+    """Telegram call failed. The message never contains the bot token or request URL."""
+
+
 async def telegram_api(method, payload):
     if not BOT_TOKEN:
         raise RuntimeError("Telegram bot token is not configured")
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
-    if _telegram_http_client is not None:
-        response = await _telegram_http_client.post(url, json=payload)
-    else:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=4.0)) as client:
-            response = await client.post(url, json=payload)
-    response.raise_for_status()
+    try:
+        if _telegram_http_client is not None:
+            response = await _telegram_http_client.post(url, json=payload)
+        else:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=4.0)) as client:
+                response = await client.post(url, json=payload)
+    except httpx.HTTPError as exc:
+        # Never let the exception text (which can embed the token-bearing URL) escape.
+        raise TelegramApiError(f"Telegram API {method} network error ({type(exc).__name__})") from None
+    if response.status_code >= 400:
+        raise TelegramApiError(f"Telegram API {method} failed with HTTP {response.status_code}")
     result = response.json()
     if not result.get("ok"):
-        raise RuntimeError(f"Telegram API rejected {method}")
+        raise TelegramApiError(f"Telegram API rejected {method}")
     return result.get("result")
 
 
@@ -315,10 +413,18 @@ def validate_production_config():
         missing.append("FLUX_WEBAPP_URL (or valid RENDER_EXTERNAL_URL)")
     if not SUPPLIER_API_KEY:
         missing.append("SUPPLIER_API_KEY")
-    if os.getenv("FLUX_DEMO_MODE", "false").strip().lower() == "true":
+    if DEMO_MODE:
         missing.append("FLUX_DEMO_MODE=false")
     if missing:
         raise RuntimeError("Production configuration is incomplete: " + ", ".join(missing))
+
+
+@app.on_event("startup")
+async def startup_validate_and_migrate():
+    """Production: validate config BEFORE creating/migrating any schema."""
+    if IS_PRODUCTION or ON_RENDER:
+        validate_production_config()
+    bootstrap_database()
 
 
 @app.on_event("startup")
@@ -331,7 +437,9 @@ async def configure_telegram_webhook():
         return
     if not WEBHOOK_SECRET:
         raise RuntimeError("TELEGRAM_WEBHOOK_SECRET must be configured before registering the webhook")
-    target_url = WEBAPP_URL + "/telegram/webhook/" + WEBHOOK_SECRET
+    # Fixed path — the secret is ONLY ever sent in the X-Telegram-Bot-Api-Secret-Token
+    # header, never in the URL, so it cannot leak through access logs or error alerts.
+    target_url = WEBAPP_URL + "/telegram/webhook"
     try:
         await telegram_api("setMyCommands", {"commands": [
             {"command": "start", "description": "Open the store"},
@@ -356,10 +464,12 @@ async def configure_telegram_webhook():
         if IS_PRODUCTION:
             raise RuntimeError("Production startup failed: Telegram webhook could not be registered") from None
 
-@app.post("/telegram/webhook/{secret}")
-async def telegram_webhook(secret: str, update: dict, request: Request):
+
+@app.post("/telegram/webhook")
+async def telegram_webhook(update: dict, request: Request):
+    # Telegram authenticates with the secret header. The path itself is not a credential.
     header_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-    if not hmac.compare_digest(secret, WEBHOOK_SECRET) or not hmac.compare_digest(header_secret, WEBHOOK_SECRET):
+    if not WEBHOOK_SECRET or not hmac.compare_digest(header_secret, WEBHOOK_SECRET):
         raise HTTPException(403, "Forbidden")
     if update.get("callback_query"):
         return await handle_callback(update["callback_query"])
@@ -374,9 +484,10 @@ async def telegram_webhook(secret: str, update: dict, request: Request):
     first = user.get("first_name") or "there"
     is_new = True
     if telegram_id:
-        with db() as c:
-            is_new = c.execute("SELECT 1 FROM users WHERE telegram_id=?", (int(telegram_id),)).fetchone() is None
-        ensure_user({"id": int(telegram_id), "username": user.get("username", ""), "first_name": first})
+        def _lookup(c):
+            return c.execute("SELECT 1 FROM users WHERE telegram_id=?", (int(telegram_id),)).fetchone() is None
+        is_new = await run_db(_lookup)
+        await run_db(lambda c: ensure_user_row(c, {"id": int(telegram_id), "username": user.get("username", ""), "first_name": first}))
     keyboard = {"inline_keyboard": [[{"text": "Open store", "web_app": {"url": WEBAPP_URL}}]]} if WEBAPP_URL.startswith("https://") else None
 
     async def reply(message_text, markup=None):
@@ -559,7 +670,7 @@ def admin_console(rest: str = ""):
 @app.api_route("/health", methods=["GET", "HEAD"])
 def health(): return {"status":"ok","service":"flux-api"}
 @app.get("/api/config")
-def config(): return {"brand":BRAND_NAME,"demo_mode":os.getenv("FLUX_DEMO_MODE","false").lower()=="true","payment_ttl_minutes":TTL,"currency":"USD"}
+def config(): return {"brand":BRAND_NAME,"demo_mode":DEMO_MODE,"payment_ttl_minutes":TTL,"currency":"USD"}
 _public_products_cache = {"expires_at": 0.0, "items": None}
 _public_products_lock = threading.Lock()
 
@@ -611,6 +722,7 @@ def my_topups(u=Depends(current_user)):
     return [dict(r,amount=r["base_cents"]/100,expected_amount=r["expected_millis"]/1000) for r in rows]
 @app.post("/api/topups")
 def create_topup(b:TopupCreate,u=Depends(current_user)):
+    rate_limit(f"topup:create:{u['id']}", 10)
     ensure_user(u); method=b.method.lower().strip()
     if method not in ("bybit","telegram_wallet"): raise HTTPException(400,"Choose Bybit or Telegram Wallet")
     recipient = get_setting("bybit_address" if method=="bybit" else "telegram_wallet_address")
@@ -618,6 +730,9 @@ def create_topup(b:TopupCreate,u=Depends(current_user)):
     if abs(b.amount-round(b.amount))>1e-9: raise HTTPException(400,"Custom top-ups must be whole-dollar amounts")
     cents=round(b.amount*100)
     with db() as c:
+        pending = c.execute("SELECT COUNT(*) n FROM topups WHERE telegram_id=? AND status='pending'", (u["id"],)).fetchone()["n"]
+        if pending >= 5:
+            raise HTTPException(429,"You already have several pending top-ups. Review or wait for them to expire before creating more.")
         c.execute("UPDATE topups SET status='expired' WHERE status='pending' AND expires_at<=?", (datetime.now(timezone.utc).isoformat(),))
         for _ in range(100):
             expected=cents*10+secrets.randbelow(999)+1
@@ -625,38 +740,67 @@ def create_topup(b:TopupCreate,u=Depends(current_user)):
         else: raise HTTPException(503,"Could not reserve a unique amount; retry")
         tid="TP-"+secrets.token_hex(4).upper(); ref="FLX-"+secrets.token_hex(3).upper()
         now=datetime.now(timezone.utc); expiry=now+timedelta(minutes=TTL)
-        c.execute("INSERT INTO topups(id,telegram_id,method,base_cents,expected_millis,status,reference,expires_at,created_at) VALUES(?,?,?,?,?,'pending',?,?,?)",(tid,u["id"],method,cents,expected,ref,expiry.isoformat(),now.isoformat()))
+        try:
+            c.execute("INSERT INTO topups(id,telegram_id,method,base_cents,expected_millis,status,reference,expires_at,created_at) VALUES(?,?,?,?,?,'pending',?,?,?)",(tid,u["id"],method,cents,expected,ref,expiry.isoformat(),now.isoformat()))
+        except Exception:
+            # Unique pending-amount race with another request: surface a clean retry instead of a 500.
+            raise HTTPException(409,"Someone else reserved this amount at the same moment. Please retry.")
     return {"id":tid,"method":method,"method_label":METHOD_LABELS[method],"recipient":recipient,"currency":"USDT","base_amount":cents/100,"expected_amount":expected/1000,"reference":ref,"expires_at":expiry.isoformat(),"expires_in_seconds":TTL*60,"instructions":"Send exactly the amount shown, to the address shown. The exact amount is how we match your payment."}
+
+
+# Only notify admins once per top-up (or when the customer submits a different reference),
+# so repeated /verify calls cannot flood the admin channel.
+_topup_last_notify: dict[str, tuple[str, float]] = {}
+_topup_notify_lock = threading.Lock()
+
+
 @app.post("/api/topups/{tid}/verify")
 async def verify(tid:str,b:VerifyRequest,u=Depends(current_user)):
-    with db() as c:
+    rate_limit(f"topup:verify:{u['id']}", 6)
+    tx_ref = b.tx_reference.strip()
+    def _do(c):
         row=c.execute("SELECT * FROM topups WHERE id=? AND telegram_id=?",(tid,u["id"])).fetchone()
         if not row: raise HTTPException(404,"Top-up not found")
         if row["status"]!="pending": raise HTTPException(400,"This top-up is no longer pending")
         if row["expires_at"] <= datetime.now(timezone.utc).isoformat():
             c.execute("UPDATE topups SET status='expired' WHERE id=? AND status='pending'", (tid,))
-            return {"status":"expired","message":"This payment request expired. Create a new request."}
-        c.execute("UPDATE topups SET tx_reference=? WHERE id=?",(b.tx_reference.strip(),tid))
-    await notify_admins_topup(tid)
-    return {"status":"pending","message":"Submitted for manual review. Wallet is credited only after an administrator confirms funds arrived."}
+            return {"status":"expired","message":"This payment request expired. Create a new request."}, None
+        c.execute("UPDATE topups SET tx_reference=? WHERE id=?",(tx_ref,tid))
+        return {"status":"pending","message":"Submitted for manual review. Wallet is credited only after an administrator confirms funds arrived."}, row
+    result, row = await run_db(_do)
+    if result is not None and result.get("status") == "expired":
+        return result
+    # De-duplicate admin notifications: same tid + same reference, at most one per 5 minutes.
+    now = time.monotonic()
+    with _topup_notify_lock:
+        prev = _topup_last_notify.get(tid)
+        should_notify = prev is None or prev[0] != tx_ref or (now - prev[1]) > 300
+        if should_notify:
+            _topup_last_notify[tid] = (tx_ref, now)
+    if should_notify:
+        await notify_admins_topup(tid)
+    return result
 @app.get("/api/orders")
 def orders(u=Depends(current_user)):
     with db() as c: rows=c.execute("SELECT id,product_id,price_cents,status,created_at,delivery_note FROM orders WHERE telegram_id=? ORDER BY created_at DESC LIMIT 50",(u["id"],)).fetchall()
     return [dict(r,price=r["price_cents"]/100,product_name=product_name_of(r["product_id"])) for r in rows]
 @app.post("/api/orders")
 async def create_order(b:OrderCreate,u=Depends(current_user)):
-    ensure_user(u)
+    rate_limit(f"order:create:{u['id']}", 10)
+    await run_db(lambda c: ensure_user_row(c, u))
     # A client-generated key makes network retries safe without charging twice.
     if b.idempotency_key:
-        with db() as c:
-            existing = c.execute("SELECT id,status FROM orders WHERE telegram_id=? AND idempotency_key=?",
-                                 (u["id"], b.idempotency_key)).fetchone()
+        def _existing(c):
+            return c.execute("SELECT id,status FROM orders WHERE telegram_id=? AND idempotency_key=?",
+                             (u["id"], b.idempotency_key)).fetchone()
+        existing = await run_db(_existing)
         if existing:
             return {"id": existing["id"], "status": existing["status"],
                     "message": "This purchase request was already received."}
     sid = parse_product_id(b.product_id)
-    with db() as c:
-        row = c.execute("SELECT * FROM catalog WHERE id=? AND enabled=1 AND removed=0", (sid,)).fetchone()
+    def _catalog_row(c):
+        return c.execute("SELECT * FROM catalog WHERE id=? AND enabled=1 AND removed=0", (sid,)).fetchone()
+    row = await run_db(_catalog_row)
     if not row: raise HTTPException(404, "Product not found")
     if not SUPPLIER_API_KEY: raise HTTPException(503, "Ordering is not available yet")
     try:
@@ -668,21 +812,23 @@ async def create_order(b:OrderCreate,u=Depends(current_user)):
     cost = cost_cents_of(live.get("price", row["supplier_price"]))
     sell = sell_cents(cost, row["margin_percent"], row["markup_cents"])
     oid = "OR-" + secrets.token_hex(4).upper(); now = datetime.now(timezone.utc).isoformat()
+    def _debit_and_insert(c):
+        updated = c.execute("UPDATE users SET balance_cents=balance_cents-? WHERE telegram_id=? AND balance_cents>=?", (sell, u["id"], sell))
+        if updated.rowcount != 1: raise HTTPException(400, "Insufficient balance. Add funds first.")
+        c.execute("INSERT INTO orders(id,telegram_id,product_id,price_cents,status,created_at,cost_cents,supplier_product_id,idempotency_key) VALUES(?,?,?,?,?,?,?,?,?)",
+                  (oid, u["id"], f"sup-{sid}", sell, "processing", now, cost, sid, b.idempotency_key))
+        c.execute("INSERT INTO ledger(id,telegram_id,delta_cents,reason,reference,created_at) VALUES(?,?,?,?,?,?)",
+                  ("LG-" + secrets.token_hex(5), u["id"], -sell, "order", oid, now))
     try:
-        with db() as c:
-            updated = c.execute("UPDATE users SET balance_cents=balance_cents-? WHERE telegram_id=? AND balance_cents>=?", (sell, u["id"], sell))
-            if updated.rowcount != 1: raise HTTPException(400, "Insufficient balance. Add funds first.")
-            c.execute("INSERT INTO orders(id,telegram_id,product_id,price_cents,status,created_at,cost_cents,supplier_product_id,idempotency_key) VALUES(?,?,?,?,?,?,?,?,?)",
-                      (oid, u["id"], f"sup-{sid}", sell, "processing", now, cost, sid, b.idempotency_key))
-            c.execute("INSERT INTO ledger(id,telegram_id,delta_cents,reason,reference,created_at) VALUES(?,?,?,?,?,?)",
-                      ("LG-" + secrets.token_hex(5), u["id"], -sell, "order", oid, now))
+        await run_db(_debit_and_insert)
     except Exception:
         # The unique index is the final guard against two simultaneous requests sharing a key.
         # If another request won the race, return that order rather than exposing a DB error.
         if b.idempotency_key:
-            with db() as c:
-                existing = c.execute("SELECT id,status FROM orders WHERE telegram_id=? AND idempotency_key=?",
-                                     (u["id"], b.idempotency_key)).fetchone()
+            def _race(c):
+                return c.execute("SELECT id,status FROM orders WHERE telegram_id=? AND idempotency_key=?",
+                                 (u["id"], b.idempotency_key)).fetchone()
+            existing = await run_db(_race)
             if existing:
                 return {"id": existing["id"], "status": existing["status"],
                         "message": "This purchase request was already received."}
@@ -700,21 +846,32 @@ async def create_order(b:OrderCreate,u=Depends(current_user)):
             # The supplier said the purchase failed. First look for a record that says otherwise;
             # if there is none, the failure stands and the wallet is refunded now.
             await reconcile_unclear_orders(only_id=oid)
-            with db() as c:
-                if c.execute("SELECT status FROM orders WHERE id=?", (oid,)).fetchone()["status"] == "needs_review":
-                    refund_order(oid, u["id"], sell, SUPPLIER_FAILED_NOTE)
-        with db() as c:
-            st = c.execute("SELECT status FROM orders WHERE id=?", (oid,)).fetchone()["status"]
+            def _still_review(c):
+                return c.execute("SELECT status FROM orders WHERE id=?", (oid,)).fetchone()["status"] == "needs_review"
+            if await run_db(_still_review):
+                refund_order(oid, u["id"], sell, SUPPLIER_FAILED_NOTE)
+        def _final_status(c):
+            return c.execute("SELECT status FROM orders WHERE id=?", (oid,)).fetchone()["status"]
+        st = await run_db(_final_status)
         if st == "refunded":
             raise HTTPException(400, SUPPLIER_FAILED_NOTE)
         return {"id": oid, "status": st, "message": "Delivered." if st == "delivered" else CUSTOMER_PENDING_NOTE}
     order = resp.get("order") or {}
-    status = "delivered" if order.get("status") == "completed" else "processing"
     value = order.get("value")
     note = None if value in (None, "", "DELIVERED_DIGITAL_PRODUCT") else str(value)
-    with db() as c:
+    order_code = order.get("orderCode")
+    if not order_code:
+        # The supplier accepted the call but returned no order code. We cannot track or
+        # confirm this order, so park it for an admin instead of leaving it stuck in
+        # 'processing' with no supplier reference (a crash/restart window that used to
+        # orphan customer funds until manual investigation).
+        mark_order(oid, "needs_review", CUSTOMER_PENDING_NOTE)
+        return {"id": oid, "status": "needs_review", "message": CUSTOMER_PENDING_NOTE}
+    status = "delivered" if order.get("status") == "completed" else "processing"
+    def _finalize(c):
         c.execute("UPDATE orders SET status=?, supplier_order_code=?, delivery_note=COALESCE(?,delivery_note) WHERE id=?",
-                  (status, order.get("orderCode"), note, oid))
+                  (status, order_code, note, oid))
+    await run_db(_finalize)
     return {"id": oid, "status": status, "message": "Delivered." if status == "delivered" else "Order placed. We'll update it shortly."}
 @app.get("/api/admin/overview")
 def admin_overview(u=Depends(admin)):
@@ -1145,7 +1302,12 @@ async def reconcile_unclear_orders(only_id=None):
     - No candidate after the grace period: the supplier has no record, so flag it for the admin
       to confirm before refunding. Nothing is refunded automatically here."""
     with db() as c:
-        sql = "SELECT id,telegram_id,supplier_product_id,price_cents,created_at FROM orders WHERE status='needs_review' AND supplier_product_id IS NOT NULL"
+        # Also pick up 'processing' orders that never received a supplier_order_code
+        # (crash/restart between our debit and the supplier response) — without this they
+        # were stuck forever with the customer's money debited.
+        sql = ("SELECT id,telegram_id,supplier_product_id,price_cents,created_at,supplier_order_code FROM orders "
+               "WHERE supplier_product_id IS NOT NULL AND "
+               "(status='needs_review' OR (status='processing' AND supplier_order_code IS NULL))")
         params = ()
         if only_id:
             sql += " AND id=?"; params = (only_id,)
@@ -1185,7 +1347,7 @@ async def reconcile_unclear_orders(only_id=None):
                     report["refunded"] += 1
             else:
                 with db() as c:
-                    c.execute("UPDATE orders SET status='processing', supplier_order_code=?, review_note=NULL WHERE id=? AND status='needs_review'",
+                    c.execute("UPDATE orders SET status='processing', supplier_order_code=?, review_note=NULL WHERE id=? AND status IN ('needs_review','processing')",
                               (o["orderCode"], r["id"]))
                 report["delivering"] += 1
             continue
@@ -1308,7 +1470,7 @@ def ops_snapshot():
 
 async def ops_check():
     """Look for anything that needs an admin, and send one digest if there is. Safe to run often."""
-    snap = ops_snapshot()
+    snap = await run_db(lambda c: ops_snapshot())
     issues = []
     if snap["flagged_no_supplier_record"]:
         issues.append(f"{snap['flagged_no_supplier_record']} order(s) have no supplier record after 15 minutes. Decide: refund or mark delivered (Admin > Orders, status Needs review).")
@@ -1342,9 +1504,13 @@ async def _ops_loop():
 
 @app.exception_handler(Exception)
 async def unhandled_error(request: Request, exc: Exception):
-    """Never show internals to customers; tell admins which route failed (rate-limited)."""
-    print(f"Unhandled error on {request.method} {request.url.path}: {type(exc).__name__}: {exc}")
-    await alert_admins(f"500:{request.url.path}", f"Unhandled error on {request.method} {request.url.path} ({type(exc).__name__}). Check the server logs.")
+    """Never show internals to customers; alert admins with the ROUTE TEMPLATE (not the raw
+    path, which can contain secrets or path-params that would flood distinct alert keys)."""
+    route = request.scope.get("route")
+    route_path = getattr(route, "path", None) or request.url.path
+    logger.error("Unhandled error on %s %s: %s: %s", request.method, route_path, type(exc).__name__, exc)
+    await alert_admins(f"500:{request.method}:{route_path}",
+                       f"Unhandled error on {request.method} {route_path} ({type(exc).__name__}). Check the server logs.")
     return JSONResponse({"detail": "Something went wrong. Please try again."}, status_code=500)
 
 @app.get("/api/admin/ops")
@@ -1613,12 +1779,14 @@ def support_get(u=Depends(current_user)):
 
 @app.post("/api/support/messages")
 async def support_post(b: SupportMessageIn, u=Depends(current_user)):
-    ensure_user(u)
+    rate_limit(f"support:{u['id']}", 10)
+    await run_db(lambda c: ensure_user_row(c, u))
     tg_id = int(u["id"])
     since = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
-    with db() as c:
-        recent = c.execute("SELECT COUNT(*) n FROM support_messages m JOIN support_threads t ON t.id=m.thread_id "
-                           "WHERE t.telegram_id=? AND m.sender='customer' AND m.created_at>=?", (tg_id, since)).fetchone()["n"]
+    def _recent(c):
+        return c.execute("SELECT COUNT(*) n FROM support_messages m JOIN support_threads t ON t.id=m.thread_id "
+                         "WHERE t.telegram_id=? AND m.sender='customer' AND m.created_at>=?", (tg_id, since)).fetchone()["n"]
+    recent = await run_db(_recent)
     if recent >= 10:
         raise HTTPException(429, "You're sending messages too quickly. Please wait a minute.")
     tid = await support_from_customer(tg_id, u.get("first_name"), u.get("username"), b.body.strip())

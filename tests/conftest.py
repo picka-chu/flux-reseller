@@ -133,9 +133,11 @@ def backdate():
 
 @pytest.fixture(autouse=True)
 def clean_state():
-    """Every test starts with an empty database and no alert history, so tests cannot affect each other."""
+    """Every test starts with an empty database and no alert/rate-limit history, so tests cannot affect each other."""
     with main.db() as d:
         for table in ("ledger", "orders", "topups", "users"):
             d.execute(f"DELETE FROM {table}")
     main._last_alert_at.clear()
+    main._rate_buckets.clear()
+    main._topup_last_notify.clear()
     yield

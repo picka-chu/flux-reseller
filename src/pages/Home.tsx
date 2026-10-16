@@ -6,12 +6,12 @@ import type { FeedSection, Me, Product } from "../lib/types";
 
 interface Props {
   me: Me | null; meLoading: boolean;
-  products: Product[] | null; productsLoading: boolean;
+  products: Product[] | null; productsLoading: boolean; productsError?: string | null;
   feed: FeedSection[] | null; feedLoading: boolean; feedError: string | null;
   onBuy: (p: Product) => void; onTopup: () => void; onShop: (category?: string) => void; onHelp: () => void; onRetry: () => void;
 }
 
-export function Home({ me, meLoading, products, productsLoading, feed, feedLoading, feedError, onBuy, onTopup, onShop, onHelp, onRetry }: Props) {
+export function Home({ me, meLoading, products, productsLoading, productsError, feed, feedLoading, feedError, onBuy, onTopup, onShop, onHelp, onRetry }: Props) {
   const categories = Array.from(new Set((products ?? []).map((p) => p.category))).slice(0, 8);
   const hasFeed = Boolean(feed?.some((section) => section.items.length > 0));
   const fallbackProducts = (products ?? []).filter((p) => p.in_stock).slice(0, 6);
@@ -118,6 +118,8 @@ export function Home({ me, meLoading, products, productsLoading, feed, feedLoadi
             <div className="flex gap-3 overflow-hidden">
               {[0, 1, 2].map((i) => <Skeleton key={i} className="aspect-[3/4] w-[156px] shrink-0 !rounded-[18px]" />)}
             </div>
+          ) : productsError ? (
+            <div className="card"><Empty icon={PackageSearch} title="Couldn't load the catalog" text={productsError} action={<button onClick={onRetry} className="btn btn-secondary btn-sm">Try again</button>} /></div>
           ) : (
             <div className="card"><Empty icon={PackageSearch} title="Catalog is being refreshed" text="Please check back shortly, or contact our support team if you need help." action={<button onClick={onRetry} className="btn btn-secondary btn-sm">Refresh catalog</button>} /></div>
           )}

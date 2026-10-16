@@ -18,7 +18,7 @@ deliver the messages.
 | Supplier balance below `SUPPLIER_LOW_BALANCE` | Checked every 10 minutes (if set) | digest |
 | Catalogue sync failed 3 times in a row | On the third failure | catalog-sync |
 | Order reconciliation crashed | On each crash | reconcile-error |
-| Any unhandled server error, per route | On the first occurrence | 500:<path> |
+| Any unhandled server error, per route | On the first occurrence | 500:<method>:<route-template> |
 
 **Noise control.** An alert with the same text is not repeated for `OPS_ALERT_COOLDOWN_MINUTES`
 (default 60). An unhandled error on a route alerts once per cooldown, not once per request.
@@ -59,7 +59,8 @@ The database holds customer balances, orders, deposits and support history. It m
    - Create a Render *Cron Job* (or any scheduler with `pg_dump` 15+ installed).
    - Command: `bash scripts/backup.sh`
    - Schedule: `0 2 * * *` (02:00 UTC every day)
-   - Environment: `DATABASE_URL` (the production connection string), `BACKUP_DIR`, `BACKUP_KEEP_DAYS=30`
+   - Environment: `SUPABASE_DB_URL` (the production connection string; `DATABASE_URL` is the fallback
+     name the script also accepts), `BACKUP_DIR`, `BACKUP_KEEP_DAYS=30`
    - Store the dumps somewhere other than the server that runs the app (for example, an encrypted
      cloud bucket). A backup kept only on the same machine is not a backup.
 3. **Restore drill, monthly.** Run `scripts/restore_drill.sh` against an empty scratch database,
@@ -82,6 +83,7 @@ The database holds customer balances, orders, deposits and support history. It m
 ## 4. Who does what
 
 - **Daily (5 minutes):** read the alerts, check Needs review and top-ups in the admin console.
-- **Weekly:** check the supplier balance and the catalogue sync date in `/api/admin/ops`.
+- **Weekly:** check the supplier balance and the catalogue sync date in the **Ops** page of the admin
+  console (or `/api/admin/ops` from an authenticated admin session).
 - **Monthly:** restore drill; review refund and support volumes; rotate nothing unless there is a reason.
 - **After any incident:** write down what happened and what changed, in a short note in your admin log.

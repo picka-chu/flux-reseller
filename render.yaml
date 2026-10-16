@@ -2,7 +2,7 @@ services:
   - type: web
     name: flux-reseller
     runtime: python
-    plan: free  # Free instances sleep when idle; upgrade for always-on production operation.
+    plan: free  # Free instances sleep when idle. For real-money production, switch to a paid (always-on) plan.
     buildCommand: npm ci && npm run build && pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
@@ -18,6 +18,8 @@ services:
         sync: false
       - key: SUPPLIER_API_KEY
         sync: false
+      # SUPPLIER_API_BASE, CATALOG_SYNC_MINUTES, DB_POOL_MAX_SIZE all have safe
+      # defaults in main.py; add them here only if you need to override them.
       - key: BRAND_NAME
         value: FLUX
       - key: SUPPLIER_LOW_BALANCE

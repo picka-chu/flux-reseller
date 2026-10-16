@@ -10,7 +10,9 @@ BACKUP_DIR="${BACKUP_DIR:-./backups}"
 LATEST="$(ls -1t "$BACKUP_DIR"/flux-*.sql.gz 2>/dev/null | head -1 || true)"
 [[ -n "$LATEST" ]] || { echo "No PostgreSQL backup found in $BACKUP_DIR" >&2; exit 1; }
 
-if [[ "$TEST_DATABASE_URL" == "${DATABASE_URL:-__unset__}" ]]; then
+# Render's production secret is SUPABASE_DB_URL; DATABASE_URL is the fallback name.
+PROD_DSN="${SUPABASE_DB_URL:-${DATABASE_URL:-__unset__}}"
+if [[ "$TEST_DATABASE_URL" == "$PROD_DSN" ]]; then
   echo "Refusing: TEST_DATABASE_URL points at the production database." >&2; exit 1
 fi
 

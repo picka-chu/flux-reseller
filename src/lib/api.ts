@@ -6,6 +6,7 @@ export class ApiError extends Error {
 }
 
 const PUBLIC_CACHE_TTL_MS = 5_000;
+const REQUEST_TIMEOUT_MS = 15_000;
 const publicCache = new Map<string, { expiresAt: number; value: unknown }>();
 const inFlight = new Map<string, Promise<unknown>>();
 const cacheablePublicPath = (path: string) =>
@@ -28,7 +29,19 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
       ...((options.headers as Record<string, string>) ?? {})
     };
     if (tg?.initData) headers.Authorization = "tma " + tg.initData;
-    const res = await fetch(path, { ...options, headers });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    let res: Response;
+    try {
+      res = await fetch(path, { ...options, headers, signal: controller.signal });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        throw new ApiError("Request timed out. Please try again.", 0);
+      }
+      throw new ApiError("Network error. Check your connection and try again.", 0);
+    } finally {
+      clearTimeout(timer);
+    }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       const detail = typeof data?.detail === "string" ? data.detail : "Request failed";

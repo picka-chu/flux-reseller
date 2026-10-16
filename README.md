@@ -23,7 +23,7 @@ at `/admin`.
 
 **Customers**
 - Feed on the home screen: best offers, just restocked, trending plans, and sponsored placements.
-- Shop with search and category filters, sorting, and sold-out markers.
+- Shop with search and category filters and sold-out markers.
 - Product pages with price, billing period, stock, how the order is handled, and a sticky buy bar.
 - Wallet with deposits by USDT transfer (Bybit UID or Telegram Wallet), reviewed by hand.
 - Orders with live status and delivered details.
@@ -33,11 +33,12 @@ at `/admin`.
 **Admins** (`/admin`, restricted to `ADMIN_TELEGRAM_IDS`)
 - Overview and 14-day revenue and order charts; a *needs attention* queue.
 - Top-up review (approve or reject against the exact amount and reference).
-- Order management: processing, delivered, rejected, refunded. Refunds are single-use.
+- Order management: processing, delivered, rejected, refunded — with an optional note (used for
+  delivery details or the refund reason). Refunds are single-use.
 - Catalogue: margins, visibility, and supplier sync.
 - Sponsored ads for the home feed and shop.
-- Customers, support threads, and settings (payment addresses and pricing defaults).
-- Alerts to Telegram when something needs a human; health endpoint at `/api/admin/ops`.
+- Customers, settings (payment addresses and pricing defaults), and an Ops health page.
+- Alerts to Telegram when something needs a human; ops health page in the console.
 
 ## How it works
 
@@ -118,6 +119,7 @@ Set these as environment variables (Render: *Environment*; locally: `.env`).
 | `FLUX_WEBAPP_URL` or `RENDER_EXTERNAL_URL` | Yes (production) | Public HTTPS URL of the app. The bot registers its webhook there. |
 | `SUPABASE_DB_URL` or `DATABASE_URL` | Yes (production) | PostgreSQL connection string. If unset, SQLite is used. |
 | `DATABASE_PATH` | No | SQLite file location (default `./flux.db`), for local use only. |
+| `DB_POOL_MAX_SIZE` | No | Postgres connection pool size (default 8). |
 | `SUPPLIER_API_KEY` | Yes (to sell) | Reseller API key. Without it, the catalogue is empty and ordering is off. |
 | `SUPPLIER_API_BASE` | No | Reseller API base URL (defaults to the supplier in use). |
 | `SUPPLIER_LOW_BALANCE` | No | Alert when the supplier balance drops below this amount. `0` disables it. |
@@ -137,7 +139,8 @@ Brand text in the app comes from `src/lib/brand.ts`.
 2. Make a random secret for `TELEGRAM_WEBHOOK_SECRET`, for example `python -c "import secrets;print(secrets.token_urlsafe(32))"`.
 3. In @BotFather, open the bot → *Bot Settings → Menu Button* (or *Configure Mini App*) and set the
    URL to your public `https://` address.
-4. Deploy. On start, the app registers the webhook at `<public URL>/telegram/webhook/<secret>`.
+4. Deploy. On start, the app registers the webhook at `<public URL>/telegram/webhook` (authenticated
+   by the `X-Telegram-Bot-Api-Secret-Token` header set from `TELEGRAM_WEBHOOK_SECRET`).
 5. Every admin must start a chat with the bot, or they will not receive alerts.
 
 Bot commands for customers: `/start`, `/help`, `/balance`, `/orders`.
@@ -156,7 +159,7 @@ If the key is missing, the app runs, but the catalogue stays empty and purchases
 
 `render.yaml` describes the service.
 
-- **Build command:** `npm install && npm run build && pip install -r requirements.txt`
+- **Build command:** `npm ci && npm run build && pip install -r requirements.txt`
 - **Start command:** `uvicorn main:app --host 0.0.0.0 --port $PORT`
 - **Plan:** the blueprint uses the free plan. Free services sleep when idle, which stops the background
   sync and alert loops. Use a paid plan for production (see [OPERATIONS.md](docs/OPERATIONS.md#free-hosting-warning)).
@@ -167,7 +170,7 @@ Set the secret variables in Render (they are marked `sync: false`). Then deploy,
 2. The logs show `Uvicorn running`, and no `Catalogue sync failed` lines.
 3. Open the bot in Telegram and send `/start`.
 4. Open the Mini App from the bot and confirm the catalogue loads.
-5. Open `/api/admin/ops` as an admin and confirm `alerts_enabled` is `true`.
+5. Open the admin console as an admin and confirm the **Ops** page shows `alerts_enabled: true`.
 
 ## Testing
 
@@ -200,7 +203,7 @@ Do not take real customer money until every item below is done.
 - [ ] Sign-in, the bot, support, and a deposit tested inside real Telegram.
 - [ ] The migrations and orders tested against the production PostgreSQL database.
 - [ ] `FLUX_DEMO_MODE` is `false` in Render; `ADMIN_TELEGRAM_IDS` lists only the real admins.
-- [ ] `/api/admin/ops` shows `alerts_enabled: true`, and an alert reached every admin.
+- [ ] The **Ops** page in the admin console shows `alerts_enabled: true`, and an alert reached every admin.
 - [ ] Nightly backup running, and one restore drill passed.
 - [ ] Terms, refund rules and privacy notice reviewed by a lawyer for each market you sell in.
 - [ ] Every token pasted into chat or logs has been revoked and replaced.

@@ -9,8 +9,9 @@ you see, then what to do. Admin actions are in the admin console (`/admin`) unle
 2. **Needs review** should be 0, or only orders that were created in the last 30 minutes.
 3. **Top-ups** should be 0 or only recent requests.
 4. Read every alert from the bot since yesterday. Each one has a playbook below.
-5. Once a week, check `/api/admin/ops`: `alerts_enabled` must be `true`, and `last_catalog_sync`
-   must be recent (within twice `CATALOG_SYNC_MINUTES`).
+5. Once a week, open **Ops** in the admin console (or call `/api/admin/ops` from an authenticated
+   admin session): `alerts_enabled` must be `true`, and `last_catalog_sync` must be recent
+   (within twice `CATALOG_SYNC_MINUTES`).
 
 ## Order states, in one table
 
@@ -112,7 +113,8 @@ Use only if data was lost or corrupted.
 1. Stop customer activity: switch off all products in **Catalog** and announce a pause through the bot.
 2. Restore the latest good backup into a **new** database (`scripts/restore_drill.sh` shows how).
 3. Compare row counts and the newest order date with what you expect.
-4. Point `DATABASE_URL` at the restored database and redeploy.
+4. Point `SUPABASE_DB_URL` (Render's database secret; `DATABASE_URL` is the fallback name) at the
+   restored database and redeploy.
 5. Check balances for a few customers against the ledger, then re-enable products.
 6. Write up what was lost, if anything, and between which times.
 
@@ -126,7 +128,7 @@ Rotate immediately if a token, key or password appears in chat, a screenshot, a 
 | `TELEGRAM_BOT_TOKEN` | Telegram @BotFather → `/revoke` | Update Render, redeploy |
 | `TELEGRAM_WEBHOOK_SECRET` | Generate a new random value | Update Render; webhook re-registers on deploy |
 | `SUPPLIER_API_KEY` | Supplier dashboard | Update Render; check `last_catalog_sync` |
-| Database password | Supabase project settings | Update `DATABASE_URL`, redeploy |
+| Database password | Supabase project settings | Update `SUPABASE_DB_URL` (and `DATABASE_URL` if used), redeploy |
 
 ## Playbook 11: Adding or removing an admin
 

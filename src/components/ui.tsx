@@ -151,7 +151,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const notify = useCallback((msg: string, tone: "ok" | "error" = "ok") => {
     window.clearTimeout(timer.current);
     setToast({ msg, tone });
-    tone === "error" ? haptic.error() : haptic.success();
+    if (tone === "error") haptic.error(); else haptic.success();
     timer.current = window.setTimeout(() => setToast(null), 3000);
   }, []);
   return (
